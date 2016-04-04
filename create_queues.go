@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	rabbitmqConn = "amqp://rmq:rmq@localhost:5672/"
+	rabbitmqURL = "amqp://rmq:rmq@localhost:5672/"
 )
 
 func failOnError(err error, msg string) {
@@ -28,7 +28,7 @@ func main() {
 
 	waitQueue := queue + "_wait"
 
-	conn, err := amqp.Dial(rabbitmqConn)
+	conn, err := amqp.Dial(rabbitmqURL)
 	failOnError(err, "Could not connect to RabbitMQ")
 	defer conn.Close()
 
