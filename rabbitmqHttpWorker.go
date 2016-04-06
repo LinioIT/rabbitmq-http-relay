@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/streadway/amqp"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"time"
@@ -29,8 +30,9 @@ type HttpRequestMessage struct {
 	expiration int64
 	retries    int
 
-	// Http Request Status
-	processed bool
+	// Drop / Retry Indicator
+	// Message is dropped after: Successful http request, message expiration, http response code 4XX or any other permanent error
+	drop bool
 }
 
 func main() {
@@ -50,21 +52,26 @@ func consumeHttpRequests() {
 		log.Println("Could not connect to RabbitMQ:", err)
 		return
 	}
-	log.Println("Connected successfully")
 	defer conn.Close()
+	log.Println("Connected successfully")
 
+	log.Println("Opening a channel to RabbitMQ...")
 	ch, err := conn.Channel()
 	if err != nil {
 		log.Println("Could not open a channel:", err)
 		return
 	}
 	defer ch.Close()
+	log.Println("Channel opened successfully")
 
+	log.Println("Setting prefetch count on the channel...")
 	if err = ch.Qos(prefetchCount, 0, false); err != nil {
-		log.Println("Could not set prefetch count on channel:", err)
+		log.Println("Could not set prefetch count:", err)
 		return
 	}
+	log.Println("Set prefetch count successfully")
 
+	log.Println("Registering a consumer...")
 	deliveries, err := ch.Consume(
 		queueName, // queue
 		"",        // consumer
@@ -78,11 +85,15 @@ func consumeHttpRequests() {
 		log.Println("Could not register a consumer:", err)
 		return
 	}
+	log.Println("Registered a consumer successfully")
 
 	closedChannelListener := make(chan *amqp.Error)
 	ch.NotifyClose(closedChannelListener)
+	log.Println("Started 'closed channel' listener")
 
 	var msg HttpRequestMessage
+
+	// Go channel to coordinate acknowledgment of RabbitMQ messages
 	ackCh := make(chan HttpRequestMessage)
 
 	for {
@@ -90,21 +101,25 @@ func consumeHttpRequests() {
 
 		// Process next available message from RabbitMQ
 		case delivery := <-deliveries:
+			log.Println("Message received from RabbitMQ. Parsing...")
 			msg, err = parse(delivery)
 			if err != nil {
 				log.Println("Could not parse message:", err)
-				msg.processed = true
+				msg.drop = true
 				ackCh <- msg
 			} else {
+				log.Println("Message parsed successfully")
 				go msg.httpPost(ackCh)
 			}
 
-		// Acknowledge message status to RabbitMQ after the http request is processed.
+		// Acknowledge RabbitMQ messages and indicate whether they should be dropped or retried
 		case msg = <-ackCh:
+			log.Println("Acknowledging message...")
 			if err = msg.acknowledge(); err != nil {
 				log.Println("Could not send message acknowledgement to RabbitMQ:", err)
 				return
 			}
+			log.Println("Message acknowledged successfully")
 
 		// Abort if a problem is detected with the RabbitMQ connection. The main() loop will attempt to reconnect.
 		case <-closedChannelListener:
@@ -114,37 +129,54 @@ func consumeHttpRequests() {
 }
 
 func parse(rmqDelivery amqp.Delivery) (msg HttpRequestMessage, err error) {
-	type ParseFields struct {
-		url        string
-		body       string
-		expiration int64
-	}
-	fields := ParseFields{}
+	var fields map[string]interface{}
 
 	msg = HttpRequestMessage{delivery: rmqDelivery}
 
 	err = json.Unmarshal(rmqDelivery.Body, &fields)
+
 	if err == nil {
-		if len(fields.url) == 0 {
+		iUrl, ok := fields["url"]
+		url := iUrl.(string)
+		if !ok || len(url) == 0 {
 			err = errors.New("Field 'url' is missing")
-		} else if len(fields.body) == 0 {
-			err = errors.New("Field 'body' is missing")
-		} else if fields.expiration <= 0 {
-			err = errors.New("Field 'expiration' is missing or invalid")
-		} else {
-			msg.url = fields.url
-			msg.body = fields.body
-			msg.expiration = fields.expiration
+			return msg, err
 		}
+
+		iBody, ok := fields["body"]
+		body := iBody.(string)
+		if !ok || len(body) == 0 {
+			err = errors.New("Field 'body' is missing")
+			return msg, err
+		}
+
+		iExpiration, ok := fields["expiration"]
+		expiration := int64(iExpiration.(float64))
+		if !ok || expiration <= 0 {
+			err = errors.New("Field 'expiration' is missing or invalid")
+		}
+
+		log.Println("Parsed fields:", fields)
+		msg.url = url
+		msg.body = body
+		msg.expiration = expiration
 	}
 
 	return msg, err
 }
 
 func (msg HttpRequestMessage) httpPost(ackCh chan HttpRequestMessage) {
-	req, _ := http.NewRequest("POST", msg.url, bytes.NewBufferString(msg.body))
+	req, err := http.NewRequest("POST", msg.url, bytes.NewBufferString(msg.body))
+	if err != nil {
+		log.Println("Invalid http request:", err)
+		msg.drop = true
+		ackCh <- msg
+		return
+	}
 
 	client := &http.Client{Timeout: time.Duration(httpTimeout) * time.Second}
+
+	log.Println("Http POST Request url:", msg.url)
 
 	resp, err := client.Do(req)
 	defer resp.Body.Close()
@@ -153,17 +185,26 @@ func (msg HttpRequestMessage) httpPost(ackCh chan HttpRequestMessage) {
 		log.Println("Error on http POST:", err)
 		ackCh <- msg
 		return
+	} else {
+		htmlData, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			log.Println("Error encountered when reading POST response body:", err)
+		} else {
+			log.Println("POST response status code:", resp.StatusCode)
+			log.Println("POST response body:", string(htmlData))
+		}
 	}
 
 	if resp.StatusCode >= 400 && resp.StatusCode <= 499 {
-		log.Println("Fatal error on http POST:", resp.Status)
-		msg.processed = true
+		log.Println("4XX error on http POST (no retry):", resp.Status)
+		msg.drop = true
 		ackCh <- msg
 		return
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
-		msg.processed = true
+		log.Println("Success on http POST:", resp.Status)
+		msg.drop = true
 		ackCh <- msg
 		return
 	}
@@ -173,15 +214,19 @@ func (msg HttpRequestMessage) httpPost(ackCh chan HttpRequestMessage) {
 }
 
 func (msg HttpRequestMessage) acknowledge() (err error) {
-	if msg.processed {
+	if msg.drop {
+		log.Println("Sending ACK (drop) for request to url:", msg.url)
 		return msg.delivery.Ack(false)
 	}
 
+	// Should message be dropped because it expired?
 	expired := time.Now().Unix() >= msg.expiration
 
 	if expired {
+		log.Println("Sending ACK (drop) for EXPIRED request to url:", msg.url)
 		return msg.delivery.Ack(false)
-	} else {
-		return msg.delivery.Nack(false, false)
 	}
+
+	log.Println("Sending NACK (retry) for request to url:", msg.url)
+	return msg.delivery.Nack(false, false)
 }
