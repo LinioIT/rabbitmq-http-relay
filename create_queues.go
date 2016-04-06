@@ -37,18 +37,21 @@ func main() {
 	defer ch.Close()
 
 	// Create main queue
+	args := make(amqp.Table)
+	args["x-dead-letter-exchange"] = ""
+	args["x-dead-letter-routing-key"] = waitQueue
 	_, err = ch.QueueDeclare(
 		queue, // name
 		true,  // durable
 		false, // delete when unused
 		false, // exclusive
 		false, // no-wait
-		nil,   // arguments
+		args,  // arguments
 	)
 	failOnError(err, "Could not declare queue "+queue)
 
 	// Create wait queue with dead-lettering back to main queue
-	args := make(amqp.Table)
+	args = make(amqp.Table)
 	args["x-message-ttl"] = int32(retryDelay)
 	args["x-dead-letter-exchange"] = ""
 	args["x-dead-letter-routing-key"] = queue

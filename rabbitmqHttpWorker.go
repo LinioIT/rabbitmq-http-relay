@@ -1,18 +1,21 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"github.com/streadway/amqp"
 	"log"
+	"net/http"
 	"time"
 )
 
 const (
 	queueName      = "notifier"
 	rabbitmqURL    = "amqp://rmq:rmq@localhost:5672/"
-	prefetchCount  = 50    // Maximum number of unacknowledged messages allowed by RabbitMQ (maximum # of threads)
-	connRetryDelay = 30    // Seconds to wait before attempting to restore a dropped RabbitMQ connection
-	messageTTL     = 86400 // Total seconds before an unsuccessfully processed message is dropped
-	httpTimeout    = 30    // Timeout in seconds for each http request
+	prefetchCount  = 50 // Maximum number of unacknowledged messages allowed by RabbitMQ (maximum # of threads)
+	connRetryDelay = 30 // Seconds to wait before attempting to restore a dropped RabbitMQ connection
+	httpTimeout    = 30 // Timeout in seconds for each http request
 )
 
 type HttpRequestMessage struct {
@@ -23,7 +26,7 @@ type HttpRequestMessage struct {
 	url        string
 	headers    map[string]string
 	body       string
-	expiration int
+	expiration int64
 	retries    int
 
 	// Http Request Status
@@ -80,24 +83,105 @@ func consumeHttpRequests() {
 	ch.NotifyClose(closedChannelListener)
 
 	var msg HttpRequestMessage
-	statusCh := make(chan HttpRequestStatus)
+	ackCh := make(chan HttpRequestMessage)
+
 	for {
 		select {
+
 		// Process next available message from RabbitMQ
 		case delivery := <-deliveries:
-			msg = parseMessage(delivery)
-			go httpRequest(&msg, statusCh)
+			msg, err = parse(delivery)
+			if err != nil {
+				log.Println("Could not parse message:", err)
+				msg.processed = true
+				ackCh <- msg
+			} else {
+				go msg.httpPost(ackCh)
+			}
 
 		// Acknowledge message status to RabbitMQ after the http request is processed.
-		// Ack() is sent on success and RabbitMQ will drop the message.
-		// Nack() is sent on failure and RabbitMQ will dead-letter the message to the wait queue*.
-		// *NOTE: If the message TTL has been reached then Ack() is sent, so that RabbitMQ drops the message.
-		case msg = <-statusCh:
-			acknowledgeMessage(&msg)
+		case msg = <-ackCh:
+			if err = msg.acknowledge(); err != nil {
+				log.Println("Could not send message acknowledgement to RabbitMQ:", err)
+				return
+			}
 
 		// Abort if a problem is detected with the RabbitMQ connection. The main() loop will attempt to reconnect.
 		case <-closedChannelListener:
 			return
 		}
+	}
+}
+
+func parse(rmqDelivery amqp.Delivery) (msg HttpRequestMessage, err error) {
+	type ParseFields struct {
+		url        string
+		body       string
+		expiration int64
+	}
+	fields := ParseFields{}
+
+	msg = HttpRequestMessage{delivery: rmqDelivery}
+
+	err = json.Unmarshal(rmqDelivery.Body, &fields)
+	if err == nil {
+		if len(fields.url) == 0 {
+			err = errors.New("Field 'url' is missing")
+		} else if len(fields.body) == 0 {
+			err = errors.New("Field 'body' is missing")
+		} else if fields.expiration <= 0 {
+			err = errors.New("Field 'expiration' is missing or invalid")
+		} else {
+			msg.url = fields.url
+			msg.body = fields.body
+			msg.expiration = fields.expiration
+		}
+	}
+
+	return msg, err
+}
+
+func (msg HttpRequestMessage) httpPost(ackCh chan HttpRequestMessage) {
+	req, _ := http.NewRequest("POST", msg.url, bytes.NewBufferString(msg.body))
+
+	client := &http.Client{Timeout: time.Duration(httpTimeout) * time.Second}
+
+	resp, err := client.Do(req)
+	defer resp.Body.Close()
+
+	if err != nil {
+		log.Println("Error on http POST:", err)
+		ackCh <- msg
+		return
+	}
+
+	if resp.StatusCode >= 400 && resp.StatusCode <= 499 {
+		log.Println("Fatal error on http POST:", resp.Status)
+		msg.processed = true
+		ackCh <- msg
+		return
+	}
+
+	if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
+		msg.processed = true
+		ackCh <- msg
+		return
+	}
+
+	log.Println("Error on http POST:", resp.Status)
+	ackCh <- msg
+}
+
+func (msg HttpRequestMessage) acknowledge() (err error) {
+	if msg.processed {
+		return msg.delivery.Ack(false)
+	}
+
+	expired := time.Now().Unix() >= msg.expiration
+
+	if expired {
+		return msg.delivery.Ack(false)
+	} else {
+		return msg.delivery.Nack(false, false)
 	}
 }
