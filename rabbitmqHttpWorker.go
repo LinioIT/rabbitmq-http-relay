@@ -129,40 +129,48 @@ func consumeHttpRequests() {
 }
 
 func parse(rmqDelivery amqp.Delivery) (msg HttpRequestMessage, err error) {
-	var fields map[string]interface{}
+	type MessageFields struct {
+		Url        string
+		Headers    []map[string]string
+		Body       string
+		Expiration int64
+	}
+
+	var fields MessageFields
 
 	msg = HttpRequestMessage{delivery: rmqDelivery}
 
-	err = json.Unmarshal(rmqDelivery.Body, &fields)
-
-	if err == nil {
-		iUrl, ok := fields["url"]
-		url := iUrl.(string)
-		if !ok || len(url) == 0 {
-			err = errors.New("Field 'url' is missing")
-			return msg, err
-		}
-
-		iBody, ok := fields["body"]
-		body := iBody.(string)
-		if !ok || len(body) == 0 {
-			err = errors.New("Field 'body' is missing")
-			return msg, err
-		}
-
-		iExpiration, ok := fields["expiration"]
-		expiration := int64(iExpiration.(float64))
-		if !ok || expiration <= 0 {
-			err = errors.New("Field 'expiration' is missing or invalid")
-		}
-
-		log.Println("Parsed fields:", fields)
-		msg.url = url
-		msg.body = body
-		msg.expiration = expiration
+	if err := json.Unmarshal(rmqDelivery.Body, &fields); err != nil {
+		return msg, err
 	}
 
-	return msg, err
+	// url
+	if len(fields.Url) == 0 {
+		err = errors.New("Field 'url' is empty or missing")
+		return msg, err
+	}
+	msg.url = fields.Url
+
+	// headers
+	msg.headers = make(map[string]string)
+	for _, m := range fields.Headers {
+		for key, val := range m {
+			msg.headers[key] = val
+		}
+	}
+
+	// body
+	msg.body = fields.Body
+
+	// message expiration
+	if fields.Expiration <= 0 {
+		err = errors.New("Field 'expiration' is missing or invalid")
+	}
+	msg.expiration = fields.Expiration
+
+	log.Println("Parsed fields:", fields)
+
+	return msg, nil
 }
 
 func (msg HttpRequestMessage) httpPost(ackCh chan HttpRequestMessage) {
@@ -176,8 +184,11 @@ func (msg HttpRequestMessage) httpPost(ackCh chan HttpRequestMessage) {
 
 	client := &http.Client{Timeout: time.Duration(httpTimeout) * time.Second}
 
-	log.Println("Http POST Request url:", msg.url)
+	for hkey, hval := range msg.headers {
+		req.Header.Set(hkey, hval)
+	}
 
+	log.Println("Http POST Request url:", msg.url)
 	resp, err := client.Do(req)
 	defer resp.Body.Close()
 
