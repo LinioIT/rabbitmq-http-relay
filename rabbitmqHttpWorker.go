@@ -190,7 +190,9 @@ func (msg HttpRequestMessage) httpPost(ackCh chan HttpRequestMessage) {
 
 	log.Println("Http POST Request url:", msg.url)
 	resp, err := client.Do(req)
-	defer resp.Body.Close()
+	if err == nil {
+		resp.Body.Close()
+	}
 
 	if err != nil {
 		log.Println("Error on http POST:", err)
