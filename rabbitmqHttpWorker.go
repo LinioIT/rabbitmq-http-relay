@@ -39,6 +39,9 @@ type HttpRequestMessage struct {
 	drop bool
 }
 
+var gracefulShutdown bool
+var gracefulRestart bool
+
 func main() {
 	usageMessage()
 
@@ -47,9 +50,20 @@ func main() {
 	for {
 		consumeHttpRequests()
 
-		log.Println("Lost connection to RabbitMQ")
+		if gracefulShutdown {
+			log.Println("Graceful Shutdown")
+			break
+		}
 
-		time.Sleep(time.Duration(config.ConnRetryDelay) * time.Second)
+		if gracefulRestart {
+			gracefulRestart = false
+			log.Println("Graceful Restart...")
+			runLoadConfig()
+		} else {
+			log.Println("Lost connection to RabbitMQ")
+			time.Sleep(time.Duration(config.ConnRetryDelay) * time.Second)
+		}
+
 	}
 }
 
