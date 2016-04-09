@@ -4,20 +4,24 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/streadway/amqp"
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"time"
 )
 
-const (
-	queueName      = "notifier"
-	rabbitmqURL    = "amqp://rmq:rmq@localhost:5672/"
-	prefetchCount  = 50 // Maximum number of unacknowledged messages allowed by RabbitMQ (maximum # of threads)
-	connRetryDelay = 30 // Seconds to wait before attempting to restore a dropped RabbitMQ connection
-	httpTimeout    = 30 // Timeout in seconds for each http request
-)
+type ConfigParameters struct {
+	QueueName      string
+	RabbitmqURL    string
+	PrefetchCount  int
+	ConnRetryDelay int
+	HttpTimeout    int
+}
+
+var config = ConfigParameters{}
 
 type HttpRequestMessage struct {
 	// RabbitMQ message
@@ -36,18 +40,77 @@ type HttpRequestMessage struct {
 }
 
 func main() {
+	usageMessage()
+
+	runLoadConfig()
+
 	for {
 		consumeHttpRequests()
 
 		log.Println("Lost connection to RabbitMQ")
 
-		time.Sleep(connRetryDelay * time.Second)
+		time.Sleep(time.Duration(config.ConnRetryDelay) * time.Second)
 	}
+}
+
+func usageMessage() {
+	help := make(map[string]bool)
+	help["-h"] = true
+	help["help"] = true
+	help["-help"] = true
+	help["--help"] = true
+
+	argCnt := len(os.Args)
+
+	if argCnt != 2 || help[os.Args[1]] == true {
+		fmt.Println("Usage: rabbitmqHttpWorker CONFIG_FILE\n")
+		os.Exit(1)
+	}
+}
+
+func runLoadConfig() {
+	if err := loadConfig(); err != nil {
+		log.Println("Could not load the configuration file:", err)
+		os.Exit(1)
+	}
+}
+
+func loadConfig() error {
+	configBytes, err := ioutil.ReadFile(os.Args[1])
+	if err != nil {
+		return errors.New("Error encountered reading file " + os.Args[1])
+	}
+
+	if err = json.Unmarshal(configBytes, &config); err != nil {
+		return err
+	}
+
+	if len(config.QueueName) == 0 {
+		return errors.New("QueueName is empty or missing")
+	}
+
+	if len(config.RabbitmqURL) == 0 {
+		return errors.New("RabbitmqURL is empty or missing")
+	}
+
+	if config.PrefetchCount < 1 || config.PrefetchCount > 100 {
+		return errors.New("PrefetchCount must be between 1 and 100")
+	}
+
+	if config.ConnRetryDelay < 10 || config.ConnRetryDelay > 300 {
+		return errors.New("ConnRetryDelay must be between 10 and 300")
+	}
+
+	if config.HttpTimeout < 10 || config.HttpTimeout > 300 {
+		return errors.New("HttpTimeout must be between 10 and 300")
+	}
+
+	return nil
 }
 
 func consumeHttpRequests() {
 	log.Println("Connecting to RabbitMQ...")
-	conn, err := amqp.Dial(rabbitmqURL)
+	conn, err := amqp.Dial(config.RabbitmqURL)
 	if err != nil {
 		log.Println("Could not connect to RabbitMQ:", err)
 		return
@@ -65,7 +128,7 @@ func consumeHttpRequests() {
 	log.Println("Channel opened successfully")
 
 	log.Println("Setting prefetch count on the channel...")
-	if err = ch.Qos(prefetchCount, 0, false); err != nil {
+	if err = ch.Qos(config.PrefetchCount, 0, false); err != nil {
 		log.Println("Could not set prefetch count:", err)
 		return
 	}
@@ -73,13 +136,13 @@ func consumeHttpRequests() {
 
 	log.Println("Registering a consumer...")
 	deliveries, err := ch.Consume(
-		queueName, // queue
-		"",        // consumer
-		false,     // auto-ack
-		false,     // exclusive
-		false,     // no-local
-		false,     // no-wait
-		nil,       // args
+		config.QueueName, // queue
+		"",               // consumer
+		false,            // auto-ack
+		false,            // exclusive
+		false,            // no-local
+		false,            // no-wait
+		nil,              // args
 	)
 	if err != nil {
 		log.Println("Could not register a consumer:", err)
@@ -96,11 +159,14 @@ func consumeHttpRequests() {
 	// Go channel to coordinate acknowledgment of RabbitMQ messages
 	ackCh := make(chan HttpRequestMessage)
 
+	unacknowledgedMsgs := 0
+
 	for {
 		select {
-
 		// Process next available message from RabbitMQ
 		case delivery := <-deliveries:
+			unacknowledgedMsgs++
+			log.Println("Unacknowledged message count:", unacknowledgedMsgs)
 			log.Println("Message received from RabbitMQ. Parsing...")
 			msg, err = parse(delivery)
 			if err != nil {
@@ -114,6 +180,8 @@ func consumeHttpRequests() {
 
 		// Acknowledge RabbitMQ messages and indicate whether they should be dropped or retried
 		case msg = <-ackCh:
+			unacknowledgedMsgs--
+			log.Println("Unacknowledged message count:", unacknowledgedMsgs)
 			log.Println("Acknowledging message...")
 			if err = msg.acknowledge(); err != nil {
 				log.Println("Could not send message acknowledgement to RabbitMQ:", err)
@@ -182,7 +250,7 @@ func (msg HttpRequestMessage) httpPost(ackCh chan HttpRequestMessage) {
 		return
 	}
 
-	client := &http.Client{Timeout: time.Duration(httpTimeout) * time.Second}
+	client := &http.Client{Timeout: time.Duration(config.HttpTimeout) * time.Second}
 
 	for hkey, hval := range msg.headers {
 		req.Header.Set(hkey, hval)

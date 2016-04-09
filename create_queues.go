@@ -23,7 +23,6 @@ func main() {
 	usageMessage()
 
 	queue, retryDelay, err := getQueueDetails()
-	// queue, retryDelay, err := getQueueDetails()
 	failOnError(err, "Invalid command line arguments")
 
 	waitQueue := queue + "_wait"
