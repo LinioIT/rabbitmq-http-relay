@@ -10,6 +10,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
@@ -41,29 +43,47 @@ type HttpRequestMessage struct {
 
 var gracefulShutdown bool
 var gracefulRestart bool
+var connectionBroken bool
+
+// Channel to receive asynchronous signals for graceful shutdown / restart
+var signals chan os.Signal
 
 func main() {
 	usageMessage()
 
 	runLoadConfig()
 
+	// Register channel to receive OS signals
+	// quit = graceful shutdown
+	// hangup = graceful restart
+	signals = make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGHUP, syscall.SIGQUIT)
+
 	for {
 		consumeHttpRequests()
 
 		if gracefulShutdown {
-			log.Println("Graceful Shutdown")
+			if connectionBroken {
+				log.Println("Broken connection to RabbitMQ was detected during shutdown")
+			} else {
+				log.Println("Graceful shutdown completed")
+			}
 			break
+		}
+
+		if connectionBroken {
+			connectionBroken = false
+			gracefulRestart = false
+			log.Printf("Broken RabbitMQ connection was detected. Reconnect will be attempted in %d seconds...", config.ConnRetryDelay)
+			time.Sleep(time.Duration(config.ConnRetryDelay) * time.Second)
 		}
 
 		if gracefulRestart {
 			gracefulRestart = false
-			log.Println("Graceful Restart...")
-			runLoadConfig()
-		} else {
-			log.Println("Lost connection to RabbitMQ")
-			time.Sleep(time.Duration(config.ConnRetryDelay) * time.Second)
+			log.Println("Restarting...")
 		}
 
+		runLoadConfig()
 	}
 }
 
@@ -83,10 +103,12 @@ func usageMessage() {
 }
 
 func runLoadConfig() {
+	log.Println("Loading the configuration file...")
 	if err := loadConfig(); err != nil {
 		log.Println("Could not load the configuration file:", err)
 		os.Exit(1)
 	}
+	log.Println("Configuration file successfully loaded")
 }
 
 func loadConfig() error {
@@ -164,14 +186,14 @@ func consumeHttpRequests() {
 	}
 	log.Println("Registered a consumer successfully")
 
-	closedChannelListener := make(chan *amqp.Error)
+	closedChannelListener := make(chan *amqp.Error, 1)
 	ch.NotifyClose(closedChannelListener)
 	log.Println("Started 'closed channel' listener")
 
 	var msg HttpRequestMessage
 
 	// Go channel to coordinate acknowledgment of RabbitMQ messages
-	ackCh := make(chan HttpRequestMessage)
+	ackCh := make(chan HttpRequestMessage, config.PrefetchCount)
 
 	unacknowledgedMsgs := 0
 
@@ -194,8 +216,6 @@ func consumeHttpRequests() {
 
 		// Acknowledge RabbitMQ messages and indicate whether they should be dropped or retried
 		case msg = <-ackCh:
-			unacknowledgedMsgs--
-			log.Println("Unacknowledged message count:", unacknowledgedMsgs)
 			log.Println("Acknowledging message...")
 			if err = msg.acknowledge(); err != nil {
 				log.Println("Could not send message acknowledgement to RabbitMQ:", err)
@@ -203,9 +223,41 @@ func consumeHttpRequests() {
 			}
 			log.Println("Message acknowledged successfully")
 
+			unacknowledgedMsgs--
+			log.Println("Unacknowledged message count:", unacknowledgedMsgs)
+			if unacknowledgedMsgs == 0 && (gracefulShutdown || gracefulRestart) {
+				return
+			}
+
 		// Abort if a problem is detected with the RabbitMQ connection. The main() loop will attempt to reconnect.
 		case <-closedChannelListener:
+			connectionBroken = true
 			return
+
+		// Process request to gracefully shutdown / restart
+		case sig := <-signals:
+			switch signalName := sig.String(); signalName {
+			case "hangup":
+				log.Println("Graceful restart requested")
+
+				// Substitute a dummy delivery channel to halt consumption from RabbitMQ
+				deliveries = make(chan amqp.Delivery, 1)
+
+				gracefulRestart = true
+				if unacknowledgedMsgs == 0 {
+					return
+				}
+			case "quit":
+				log.Println("Graceful shutdown requested")
+
+				// Substitute a dummy delivery channel to halt consumption from RabbitMQ
+				deliveries = make(chan amqp.Delivery, 1)
+
+				gracefulShutdown = true
+				if unacknowledgedMsgs == 0 {
+					return
+				}
+			}
 		}
 	}
 }
@@ -272,9 +324,6 @@ func (msg HttpRequestMessage) httpPost(ackCh chan HttpRequestMessage) {
 
 	log.Println("Http POST Request url:", msg.url)
 	resp, err := client.Do(req)
-	if err == nil {
-		resp.Body.Close()
-	}
 
 	if err != nil {
 		log.Println("Error on http POST:", err)
@@ -287,6 +336,7 @@ func (msg HttpRequestMessage) httpPost(ackCh chan HttpRequestMessage) {
 		} else {
 			log.Println("POST response status code:", resp.StatusCode)
 			log.Println("POST response body:", string(htmlData))
+			resp.Body.Close()
 		}
 	}
 
