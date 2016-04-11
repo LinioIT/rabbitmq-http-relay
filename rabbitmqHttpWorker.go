@@ -16,8 +16,9 @@ import (
 )
 
 type ConfigParameters struct {
-	QueueName      string
 	RabbitmqURL    string
+	QueueName      string
+	MsgRetryDelay  int
 	PrefetchCount  int
 	ConnRetryDelay int
 	HttpTimeout    int
@@ -51,15 +52,17 @@ var signals chan os.Signal
 func main() {
 	usageMessage()
 
-	runLoadConfig()
-
-	// Register channel to receive OS signals
+	// Start listener for OS signals
 	// quit = graceful shutdown
 	// hangup = graceful restart
 	signals = make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGHUP, syscall.SIGQUIT)
 
 	for {
+		runLoadConfig()
+
+		runQueueCheck()
+
 		consumeHttpRequests()
 
 		if gracefulShutdown {
@@ -82,8 +85,6 @@ func main() {
 			gracefulRestart = false
 			log.Println("Restarting...")
 		}
-
-		runLoadConfig()
 	}
 }
 
@@ -121,12 +122,16 @@ func loadConfig() error {
 		return err
 	}
 
+	if len(config.RabbitmqURL) == 0 {
+		return errors.New("RabbitmqURL is empty or missing")
+	}
+
 	if len(config.QueueName) == 0 {
 		return errors.New("QueueName is empty or missing")
 	}
 
-	if len(config.RabbitmqURL) == 0 {
-		return errors.New("RabbitmqURL is empty or missing")
+	if config.MsgRetryDelay < 30 || config.MsgRetryDelay > 3600 {
+		return errors.New("MsgRetryDelay must be between 30 and 3600 seconds")
 	}
 
 	if config.PrefetchCount < 1 || config.PrefetchCount > 100 {
@@ -134,11 +139,72 @@ func loadConfig() error {
 	}
 
 	if config.ConnRetryDelay < 10 || config.ConnRetryDelay > 300 {
-		return errors.New("ConnRetryDelay must be between 10 and 300")
+		return errors.New("ConnRetryDelay must be between 10 and 300 seconds")
 	}
 
 	if config.HttpTimeout < 10 || config.HttpTimeout > 300 {
-		return errors.New("HttpTimeout must be between 10 and 300")
+		return errors.New("HttpTimeout must be between 10 and 300 seconds")
+	}
+
+	return nil
+}
+
+/* Confirm queue configuration. Create queues if they don't exist. */
+func runQueueCheck() {
+	log.Println("Checking RabbitMQ queues...")
+	if err := queueCheck(); err != nil {
+		log.Println("Error detected while creating/confirming queue configuration:", err)
+		os.Exit(1)
+	}
+	log.Println("Queues are ready")
+}
+
+func queueCheck() error {
+	waitQueue := config.QueueName + "_wait"
+
+	conn, err := amqp.Dial(config.RabbitmqURL)
+	if err != nil {
+		return errors.New("Could not connect to RabbitMQ")
+	}
+	defer conn.Close()
+
+	ch, err := conn.Channel()
+	if err != nil {
+		return errors.New("Could not open a RabbitMQ channel")
+	}
+	defer ch.Close()
+
+	// Create main queue
+	args := make(amqp.Table)
+	args["x-dead-letter-exchange"] = ""
+	args["x-dead-letter-routing-key"] = waitQueue
+	_, err = ch.QueueDeclare(
+		config.QueueName, // name
+		true,             // durable
+		false,            // delete when unused
+		false,            // exclusive
+		false,            // no-wait
+		args,             // arguments
+	)
+	if err != nil {
+		return errors.New("Could not declare queue " + config.QueueName)
+	}
+
+	// Create wait queue with dead-lettering back to main queue
+	args = make(amqp.Table)
+	args["x-message-ttl"] = 1000 * int32(config.MsgRetryDelay)
+	args["x-dead-letter-exchange"] = ""
+	args["x-dead-letter-routing-key"] = config.QueueName
+	_, err = ch.QueueDeclare(
+		waitQueue, // name
+		true,      // durable
+		false,     // delete when unused
+		false,     // exclusive
+		false,     // no-wait
+		args,      // arguments
+	)
+	if err != nil {
+		return errors.New("Could not declare queue " + waitQueue)
 	}
 
 	return nil
@@ -384,8 +450,8 @@ func (msg HttpRequestMessage) acknowledge() (err error) {
 		return msg.delivery.Ack(false)
 	}
 
-	// Should message be dropped because it expired?
-	expired := time.Now().Unix() >= msg.expiration
+	// Drop message if it will expire before the next retry
+	expired := msg.expiration < (time.Now().Unix() + int64(config.MsgRetryDelay))
 
 	if expired {
 		log.Println("Sending ACK (drop) for EXPIRED request to url:", msg.url)
