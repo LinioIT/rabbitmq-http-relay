@@ -34,7 +34,7 @@ type HttpRequestMessage struct {
 	headers    map[string]string
 	body       string
 	expiration int64
-	retries    int
+	retry      int
 
 	// Drop / Retry Indicator
 	// Message is dropped after: Successful http request, message expiration, http response code 4XX or any other permanent error
@@ -302,7 +302,27 @@ func parse(rmqDelivery amqp.Delivery) (msg HttpRequestMessage, err error) {
 	}
 	msg.expiration = fields.Expiration
 
+	// Is this a retry? (as per RabbitMQ message headers)
+	rmqHeaders := rmqDelivery.Headers
+	if rmqHeaders != nil {
+		deathHistory, ok := rmqHeaders["x-death"]
+		if ok {
+			// The RabbitMQ "death" history is provided as an array of 2 maps.  One map has the history for the wait queue, the other for the main queue.
+			// The "count" field will have the same value in each map and it represents the # of times this message was dead-lettered to each queue.
+			// As an example, if the count is currently two, then there have been two previous attempts to send this message and the upcoming attempt will be the 2nd retry.
+			queueDeathHistory := deathHistory.([]interface{})
+			if len(queueDeathHistory) == 2 {
+				waitQueueDeathHistory := queueDeathHistory[0].(amqp.Table)
+				retryCount, retryCountOk := waitQueueDeathHistory["count"]
+				if retryCountOk {
+					msg.retry = int(retryCount.(int64))
+				}
+			}
+		}
+	}
+
 	log.Println("Parsed fields:", fields)
+	log.Println("Retry:", msg.retry)
 
 	return msg, nil
 }
