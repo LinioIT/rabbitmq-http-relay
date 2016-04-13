@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/streadway/amqp"
+	"gopkg.in/gcfg.v1"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -16,12 +17,21 @@ import (
 )
 
 type ConfigParameters struct {
-	RabbitmqURL    string
-	QueueName      string
-	MsgRetryDelay  int
-	PrefetchCount  int
-	ConnRetryDelay int
-	HttpTimeout    int
+	Connection struct {
+		RabbitmqURL string
+		RetryDelay  int
+	}
+	Queue struct {
+		Name          string
+		WaitDelay     int
+		PrefetchCount int
+	}
+	Message struct {
+		DefaultTTL int
+	}
+	Http struct {
+		Timeout int
+	}
 }
 
 var config = ConfigParameters{}
@@ -30,12 +40,15 @@ type HttpRequestMessage struct {
 	// RabbitMQ message
 	delivery amqp.Delivery
 
-	// Parsed fields
+	// Http request fields
 	url        string
 	headers    map[string]string
 	body       string
 	expiration int64
-	retry      int
+
+	// Retry history from RabbitMQ headers
+	retry              int
+	firstRejectionTime int64
 
 	// Drop / Retry Indicator
 	// Message is dropped after: Successful http request, message expiration, http response code 4XX or any other permanent error
@@ -77,8 +90,8 @@ func main() {
 		if connectionBroken {
 			connectionBroken = false
 			gracefulRestart = false
-			log.Printf("Broken RabbitMQ connection was detected. Reconnect will be attempted in %d seconds...", config.ConnRetryDelay)
-			time.Sleep(time.Duration(config.ConnRetryDelay) * time.Second)
+			log.Printf("Broken RabbitMQ connection was detected. Reconnect will be attempted in %d seconds...", config.Connection.RetryDelay)
+			time.Sleep(time.Duration(config.Connection.RetryDelay) * time.Second)
 		}
 
 		if gracefulRestart {
@@ -110,6 +123,7 @@ func runLoadConfig() {
 		os.Exit(1)
 	}
 	log.Println("Configuration file successfully loaded")
+	log.Println("config:", config)
 }
 
 func loadConfig() error {
@@ -118,32 +132,36 @@ func loadConfig() error {
 		return errors.New("Error encountered reading file " + os.Args[1])
 	}
 
-	if err = json.Unmarshal(configBytes, &config); err != nil {
+	if err = gcfg.ReadStringInto(&config, string(configBytes)); err != nil {
 		return err
 	}
 
-	if len(config.RabbitmqURL) == 0 {
-		return errors.New("RabbitmqURL is empty or missing")
+	if len(config.Connection.RabbitmqURL) == 0 {
+		return errors.New("RabbitMQ URL is empty or missing")
 	}
 
-	if len(config.QueueName) == 0 {
-		return errors.New("QueueName is empty or missing")
+	if len(config.Queue.Name) == 0 {
+		return errors.New("Queue Name is empty or missing")
 	}
 
-	if config.MsgRetryDelay < 30 || config.MsgRetryDelay > 3600 {
-		return errors.New("MsgRetryDelay must be between 30 and 3600 seconds")
+	if config.Queue.WaitDelay < 30 || config.Queue.WaitDelay > 3600 {
+		return errors.New("Queue Wait Delay must be between 30 and 3600 seconds")
 	}
 
-	if config.PrefetchCount < 1 || config.PrefetchCount > 100 {
+	if config.Message.DefaultTTL < 3600 || config.Message.DefaultTTL > 259200 {
+		return errors.New("Message Default TTL must be between 3600 and 259200 seconds")
+	}
+
+	if config.Queue.PrefetchCount < 1 || config.Queue.PrefetchCount > 100 {
 		return errors.New("PrefetchCount must be between 1 and 100")
 	}
 
-	if config.ConnRetryDelay < 10 || config.ConnRetryDelay > 300 {
-		return errors.New("ConnRetryDelay must be between 10 and 300 seconds")
+	if config.Connection.RetryDelay < 10 || config.Connection.RetryDelay > 300 {
+		return errors.New("Connection Retry Delay must be between 10 and 300 seconds")
 	}
 
-	if config.HttpTimeout < 10 || config.HttpTimeout > 300 {
-		return errors.New("HttpTimeout must be between 10 and 300 seconds")
+	if config.Http.Timeout < 10 || config.Http.Timeout > 300 {
+		return errors.New("Http Timeout must be between 10 and 300 seconds")
 	}
 
 	return nil
@@ -160,9 +178,9 @@ func runQueueCheck() {
 }
 
 func queueCheck() error {
-	waitQueue := config.QueueName + "_wait"
+	waitQueue := config.Queue.Name + "_wait"
 
-	conn, err := amqp.Dial(config.RabbitmqURL)
+	conn, err := amqp.Dial(config.Connection.RabbitmqURL)
 	if err != nil {
 		return errors.New("Could not connect to RabbitMQ")
 	}
@@ -179,22 +197,22 @@ func queueCheck() error {
 	args["x-dead-letter-exchange"] = ""
 	args["x-dead-letter-routing-key"] = waitQueue
 	_, err = ch.QueueDeclare(
-		config.QueueName, // name
-		true,             // durable
-		false,            // delete when unused
-		false,            // exclusive
-		false,            // no-wait
-		args,             // arguments
+		config.Queue.Name, // name
+		true,              // durable
+		false,             // delete when unused
+		false,             // exclusive
+		false,             // no-wait
+		args,              // arguments
 	)
 	if err != nil {
-		return errors.New("Could not declare queue " + config.QueueName)
+		return errors.New("Could not declare queue " + config.Queue.Name)
 	}
 
 	// Create wait queue with dead-lettering back to main queue
 	args = make(amqp.Table)
-	args["x-message-ttl"] = 1000 * int32(config.MsgRetryDelay)
+	args["x-message-ttl"] = 1000 * int32(config.Queue.WaitDelay)
 	args["x-dead-letter-exchange"] = ""
-	args["x-dead-letter-routing-key"] = config.QueueName
+	args["x-dead-letter-routing-key"] = config.Queue.Name
 	_, err = ch.QueueDeclare(
 		waitQueue, // name
 		true,      // durable
@@ -212,7 +230,7 @@ func queueCheck() error {
 
 func consumeHttpRequests() {
 	log.Println("Connecting to RabbitMQ...")
-	conn, err := amqp.Dial(config.RabbitmqURL)
+	conn, err := amqp.Dial(config.Connection.RabbitmqURL)
 	if err != nil {
 		log.Println("Could not connect to RabbitMQ:", err)
 		return
@@ -230,7 +248,7 @@ func consumeHttpRequests() {
 	log.Println("Channel opened successfully")
 
 	log.Println("Setting prefetch count on the channel...")
-	if err = ch.Qos(config.PrefetchCount, 0, false); err != nil {
+	if err = ch.Qos(config.Queue.PrefetchCount, 0, false); err != nil {
 		log.Println("Could not set prefetch count:", err)
 		return
 	}
@@ -238,13 +256,13 @@ func consumeHttpRequests() {
 
 	log.Println("Registering a consumer...")
 	deliveries, err := ch.Consume(
-		config.QueueName, // queue
-		"",               // consumer
-		false,            // auto-ack
-		false,            // exclusive
-		false,            // no-local
-		false,            // no-wait
-		nil,              // args
+		config.Queue.Name, // queue
+		"",                // consumer
+		false,             // auto-ack
+		false,             // exclusive
+		false,             // no-local
+		false,             // no-wait
+		nil,               // args
 	)
 	if err != nil {
 		log.Println("Could not register a consumer:", err)
@@ -259,7 +277,7 @@ func consumeHttpRequests() {
 	var msg HttpRequestMessage
 
 	// Go channel to coordinate acknowledgment of RabbitMQ messages
-	ackCh := make(chan HttpRequestMessage, config.PrefetchCount)
+	ackCh := make(chan HttpRequestMessage, config.Queue.PrefetchCount)
 
 	unacknowledgedMsgs := 0
 
@@ -363,12 +381,12 @@ func parse(rmqDelivery amqp.Delivery) (msg HttpRequestMessage, err error) {
 	msg.body = fields.Body
 
 	// message expiration
-	if fields.Expiration <= 0 {
-		err = errors.New("Field 'expiration' is missing or invalid")
+	if fields.Expiration != 0 && fields.Expiration < time.Now().Unix() {
+		err = errors.New("Field 'expiration' is invalid.  The expiration time has already past.")
 	}
 	msg.expiration = fields.Expiration
 
-	// Is this a retry? (as per RabbitMQ message headers)
+	// Examine RabbitMQ message headers to determine retry count and time of first rejection.
 	rmqHeaders := rmqDelivery.Headers
 	if rmqHeaders != nil {
 		deathHistory, ok := rmqHeaders["x-death"]
@@ -378,10 +396,20 @@ func parse(rmqDelivery amqp.Delivery) (msg HttpRequestMessage, err error) {
 			// As an example, if the count is currently two, then there have been two previous attempts to send this message and the upcoming attempt will be the 2nd retry.
 			queueDeathHistory := deathHistory.([]interface{})
 			if len(queueDeathHistory) == 2 {
-				waitQueueDeathHistory := queueDeathHistory[0].(amqp.Table)
-				retryCount, retryCountOk := waitQueueDeathHistory["count"]
+				mainQueueDeathHistory := queueDeathHistory[1].(amqp.Table)
+
+				// Get retry count
+				retryCount, retryCountOk := mainQueueDeathHistory["count"]
 				if retryCountOk {
 					msg.retry = int(retryCount.(int64))
+				}
+
+				// Get time of first rejection
+				rejectTime, rejectTimeOk := mainQueueDeathHistory["time"]
+				if rejectTimeOk {
+					if rejectTime != nil {
+						msg.firstRejectionTime = rejectTime.(time.Time).Unix()
+					}
 				}
 			}
 		}
@@ -389,6 +417,7 @@ func parse(rmqDelivery amqp.Delivery) (msg HttpRequestMessage, err error) {
 
 	log.Println("Parsed fields:", fields)
 	log.Println("Retry:", msg.retry)
+	log.Println("First Rejection Time:", msg.firstRejectionTime)
 
 	return msg, nil
 }
@@ -402,7 +431,7 @@ func (msg HttpRequestMessage) httpPost(ackCh chan HttpRequestMessage) {
 		return
 	}
 
-	client := &http.Client{Timeout: time.Duration(config.HttpTimeout) * time.Second}
+	client := &http.Client{Timeout: time.Duration(config.Http.Timeout) * time.Second}
 
 	for hkey, hval := range msg.headers {
 		req.Header.Set(hkey, hval)
@@ -451,7 +480,16 @@ func (msg HttpRequestMessage) acknowledge() (err error) {
 	}
 
 	// Drop message if it will expire before the next retry
-	expired := msg.expiration < (time.Now().Unix() + int64(config.MsgRetryDelay))
+	expired := false
+	if msg.expiration > 0 {
+		// Use the expiration time included with the message, if one was provided
+		expired = msg.expiration < (time.Now().Unix() + int64(config.Queue.WaitDelay))
+	} else {
+		// Otherwise, compare the default TTL to the time the message was first rejected
+		if msg.firstRejectionTime > 0 {
+			expired = (msg.firstRejectionTime + int64(config.Message.DefaultTTL)) < (time.Now().Unix() + int64(config.Queue.WaitDelay))
+		}
+	}
 
 	if expired {
 		log.Println("Sending ACK (drop) for EXPIRED request to url:", msg.url)
