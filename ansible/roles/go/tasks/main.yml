@@ -29,3 +29,15 @@
     executable: /bin/bash
     chdir: /home/vagrant
 
+- name: Install ini-style configuration file parser
+  shell: export GOPATH=/home/vagrant/go; /usr/local/go/bin/go get gopkg.in/gcfg.v1
+  args:
+    executable: /bin/bash
+    chdir: /home/vagrant
+
+- name: Chnage ownership of Go files from root to vagrant
+  shell: /bin/chown -R vagrant:vagrant go
+  args:
+    executable: /bin/bash
+    chdir: /home/vagrant
+
