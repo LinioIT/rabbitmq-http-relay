@@ -16,6 +16,28 @@ import (
 	"time"
 )
 
+type LogLevel int
+
+const (
+	Fatal LogLevel = iota
+	Warn
+	Info
+	Debug
+)
+
+var logLevels = [...]string{
+	"Fatal",
+	"Warn",
+	"Info",
+	"Debug",
+}
+
+func logPrintln(level LogLevel, args ...interface{}) {
+	if int(level) <= config.Log.LevelInt {
+		log.Println(args...)
+	}
+}
+
 type ConfigParameters struct {
 	Connection struct {
 		RabbitmqURL string
@@ -31,6 +53,10 @@ type ConfigParameters struct {
 	}
 	Http struct {
 		Timeout int
+	}
+	Log struct {
+		Level    string
+		LevelInt int
 	}
 }
 
@@ -80,9 +106,9 @@ func main() {
 
 		if gracefulShutdown {
 			if connectionBroken {
-				log.Println("Broken connection to RabbitMQ was detected during shutdown")
+				logPrintln(Fatal, "Broken connection to RabbitMQ was detected during shutdown")
 			} else {
-				log.Println("Graceful shutdown completed")
+				logPrintln(Info, "Graceful shutdown completed")
 			}
 			break
 		}
@@ -90,13 +116,13 @@ func main() {
 		if connectionBroken {
 			connectionBroken = false
 			gracefulRestart = false
-			log.Printf("Broken RabbitMQ connection was detected. Reconnect will be attempted in %d seconds...", config.Connection.RetryDelay)
+			logPrintln(Warn, "Broken RabbitMQ connection was detected. Reconnect will be attempted in", config.Connection.RetryDelay, "seconds...")
 			time.Sleep(time.Duration(config.Connection.RetryDelay) * time.Second)
 		}
 
 		if gracefulRestart {
 			gracefulRestart = false
-			log.Println("Restarting...")
+			logPrintln(Info, "Restarting...")
 		}
 	}
 }
@@ -117,13 +143,12 @@ func usageMessage() {
 }
 
 func runLoadConfig() {
-	log.Println("Loading the configuration file...")
 	if err := loadConfig(); err != nil {
-		log.Println("Could not load the configuration file:", err)
+		logPrintln(Fatal, "Could not load the configuration file:", err)
 		os.Exit(1)
 	}
-	log.Println("Configuration file successfully loaded")
-	log.Println("config:", config)
+	logPrintln(Info, "Configuration file successfully loaded")
+	logPrintln(Debug, "config:", config)
 }
 
 func loadConfig() error {
@@ -164,17 +189,28 @@ func loadConfig() error {
 		return errors.New("Http Timeout must be between 10 and 300 seconds")
 	}
 
+	ok := false
+	for ll := 0; ll < len(logLevels); ll++ {
+		if logLevels[ll] == config.Log.Level {
+			config.Log.LevelInt = ll
+			ok = true
+		}
+	}
+	if !ok {
+		return errors.New("Invalid logging level specified")
+	}
+
 	return nil
 }
 
 /* Confirm queue configuration. Create queues if they don't exist. */
 func runQueueCheck() {
-	log.Println("Checking RabbitMQ queues...")
+	logPrintln(Info, "Checking RabbitMQ queues...")
 	if err := queueCheck(); err != nil {
-		log.Println("Error detected while creating/confirming queue configuration:", err)
+		logPrintln(Fatal, "Error detected while creating/confirming queue configuration:", err)
 		os.Exit(1)
 	}
-	log.Println("Queues are ready")
+	logPrintln(Info, "Queues are ready")
 }
 
 func queueCheck() error {
@@ -229,32 +265,32 @@ func queueCheck() error {
 }
 
 func consumeHttpRequests() {
-	log.Println("Connecting to RabbitMQ...")
+	logPrintln(Info, "Connecting to RabbitMQ...")
 	conn, err := amqp.Dial(config.Connection.RabbitmqURL)
 	if err != nil {
-		log.Println("Could not connect to RabbitMQ:", err)
+		logPrintln(Warn, "Could not connect to RabbitMQ:", err)
 		return
 	}
 	defer conn.Close()
-	log.Println("Connected successfully")
+	logPrintln(Info, "Connected successfully")
 
-	log.Println("Opening a channel to RabbitMQ...")
+	logPrintln(Info, "Opening a channel to RabbitMQ...")
 	ch, err := conn.Channel()
 	if err != nil {
-		log.Println("Could not open a channel:", err)
+		logPrintln(Warn, "Could not open a channel:", err)
 		return
 	}
 	defer ch.Close()
-	log.Println("Channel opened successfully")
+	logPrintln(Info, "Channel opened successfully")
 
-	log.Println("Setting prefetch count on the channel...")
+	logPrintln(Info, "Setting prefetch count on the channel...")
 	if err = ch.Qos(config.Queue.PrefetchCount, 0, false); err != nil {
-		log.Println("Could not set prefetch count:", err)
+		logPrintln(Warn, "Could not set prefetch count:", err)
 		return
 	}
-	log.Println("Set prefetch count successfully")
+	logPrintln(Info, "Set prefetch count successfully")
 
-	log.Println("Registering a consumer...")
+	logPrintln(Info, "Registering a consumer...")
 	deliveries, err := ch.Consume(
 		config.Queue.Name, // queue
 		"",                // consumer
@@ -265,14 +301,14 @@ func consumeHttpRequests() {
 		nil,               // args
 	)
 	if err != nil {
-		log.Println("Could not register a consumer:", err)
+		logPrintln(Warn, "Could not register a consumer:", err)
 		return
 	}
-	log.Println("Registered a consumer successfully")
+	logPrintln(Info, "Registered a consumer successfully")
 
 	closedChannelListener := make(chan *amqp.Error, 1)
 	ch.NotifyClose(closedChannelListener)
-	log.Println("Started 'closed channel' listener")
+	logPrintln(Info, "Started 'closed channel' listener")
 
 	var msg HttpRequestMessage
 
@@ -286,29 +322,29 @@ func consumeHttpRequests() {
 		// Process next available message from RabbitMQ
 		case delivery := <-deliveries:
 			unacknowledgedMsgs++
-			log.Println("Unacknowledged message count:", unacknowledgedMsgs)
-			log.Println("Message received from RabbitMQ. Parsing...")
+			logPrintln(Debug, "Unacknowledged message count:", unacknowledgedMsgs)
+			logPrintln(Info, "Message received from RabbitMQ. Parsing...")
 			msg, err = parse(delivery)
 			if err != nil {
-				log.Println("Could not parse message:", err)
+				logPrintln(Warn, "Could not parse message:", err)
 				msg.drop = true
 				ackCh <- msg
 			} else {
-				log.Println("Message parsed successfully")
+				logPrintln(Info, "Message parsed successfully")
 				go msg.httpPost(ackCh)
 			}
 
 		// Acknowledge RabbitMQ messages and indicate whether they should be dropped or retried
 		case msg = <-ackCh:
-			log.Println("Acknowledging message...")
+			logPrintln(Info, "Acknowledging message...")
 			if err = msg.acknowledge(); err != nil {
-				log.Println("Could not send message acknowledgement to RabbitMQ:", err)
+				logPrintln(Warn, "Could not send message acknowledgement to RabbitMQ:", err)
 				return
 			}
-			log.Println("Message acknowledged successfully")
+			logPrintln(Info, "Message acknowledged successfully")
 
 			unacknowledgedMsgs--
-			log.Println("Unacknowledged message count:", unacknowledgedMsgs)
+			logPrintln(Debug, "Unacknowledged message count:", unacknowledgedMsgs)
 			if unacknowledgedMsgs == 0 && (gracefulShutdown || gracefulRestart) {
 				return
 			}
@@ -322,7 +358,7 @@ func consumeHttpRequests() {
 		case sig := <-signals:
 			switch signalName := sig.String(); signalName {
 			case "hangup":
-				log.Println("Graceful restart requested")
+				logPrintln(Info, "Graceful restart requested")
 
 				// Substitute a dummy delivery channel to halt consumption from RabbitMQ
 				deliveries = make(chan amqp.Delivery, 1)
@@ -332,7 +368,7 @@ func consumeHttpRequests() {
 					return
 				}
 			case "quit":
-				log.Println("Graceful shutdown requested")
+				logPrintln(Info, "Graceful shutdown requested")
 
 				// Substitute a dummy delivery channel to halt consumption from RabbitMQ
 				deliveries = make(chan amqp.Delivery, 1)
@@ -415,9 +451,9 @@ func parse(rmqDelivery amqp.Delivery) (msg HttpRequestMessage, err error) {
 		}
 	}
 
-	log.Println("Parsed fields:", fields)
-	log.Println("Retry:", msg.retry)
-	log.Println("First Rejection Time:", msg.firstRejectionTime)
+	logPrintln(Debug, "Parsed fields:", fields)
+	logPrintln(Debug, "Retry:", msg.retry)
+	logPrintln(Debug, "First Rejection Time:", msg.firstRejectionTime)
 
 	return msg, nil
 }
@@ -425,7 +461,7 @@ func parse(rmqDelivery amqp.Delivery) (msg HttpRequestMessage, err error) {
 func (msg HttpRequestMessage) httpPost(ackCh chan HttpRequestMessage) {
 	req, err := http.NewRequest("POST", msg.url, bytes.NewBufferString(msg.body))
 	if err != nil {
-		log.Println("Invalid http request:", err)
+		logPrintln(Warn, "Invalid http request:", err)
 		msg.drop = true
 		ackCh <- msg
 		return
@@ -437,45 +473,45 @@ func (msg HttpRequestMessage) httpPost(ackCh chan HttpRequestMessage) {
 		req.Header.Set(hkey, hval)
 	}
 
-	log.Println("Http POST Request url:", msg.url)
+	logPrintln(Info, "Http POST Request url:", msg.url)
 	resp, err := client.Do(req)
 
 	if err != nil {
-		log.Println("Error on http POST:", err)
+		logPrintln(Warn, "Error on http POST:", err)
 		ackCh <- msg
 		return
 	} else {
 		htmlData, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
-			log.Println("Error encountered when reading POST response body:", err)
+			logPrintln(Info, "Error encountered when reading POST response body:", err)
 		} else {
-			log.Println("POST response status code:", resp.StatusCode)
-			log.Println("POST response body:", string(htmlData))
+			logPrintln(Info, "POST response status code:", resp.StatusCode)
+			logPrintln(Debug, "POST response body:", string(htmlData))
 			resp.Body.Close()
 		}
 	}
 
 	if resp.StatusCode >= 400 && resp.StatusCode <= 499 {
-		log.Println("4XX error on http POST (no retry):", resp.Status)
+		logPrintln(Info, "4XX status on http POST (no retry):", resp.Status)
 		msg.drop = true
 		ackCh <- msg
 		return
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
-		log.Println("Success on http POST:", resp.Status)
+		logPrintln(Info, "Success on http POST:", resp.Status)
 		msg.drop = true
 		ackCh <- msg
 		return
 	}
 
-	log.Println("Error on http POST:", resp.Status)
+	logPrintln(Warn, "Error on http POST:", resp.Status)
 	ackCh <- msg
 }
 
 func (msg HttpRequestMessage) acknowledge() (err error) {
 	if msg.drop {
-		log.Println("Sending ACK (drop) for request to url:", msg.url)
+		logPrintln(Info, "Sending ACK (drop) for request to url:", msg.url)
 		return msg.delivery.Ack(false)
 	}
 
@@ -492,10 +528,10 @@ func (msg HttpRequestMessage) acknowledge() (err error) {
 	}
 
 	if expired {
-		log.Println("Sending ACK (drop) for EXPIRED request to url:", msg.url)
+		logPrintln(Info, "Sending ACK (drop) for EXPIRED request to url:", msg.url)
 		return msg.delivery.Ack(false)
 	}
 
-	log.Println("Sending NACK (retry) for request to url:", msg.url)
+	logPrintln(Info, "Sending NACK (retry) for request to url:", msg.url)
 	return msg.delivery.Nack(false, false)
 }
