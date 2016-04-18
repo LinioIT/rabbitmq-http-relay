@@ -24,7 +24,6 @@
   service: name=rabbitmq-server state=reloaded
 
 - name: enable management plugin
-  sudo: yes
   shell: /usr/sbin/rabbitmq-plugins enable rabbitmq_management
 
 - name: wait for management plugin to start
@@ -34,3 +33,11 @@
   shell: /usr/bin/wget http://localhost:15672/cli/rabbitmqadmin; chmod a+rx rabbitmqadmin
   args:
     chdir: /vagrant
+
+- name: copy timestamp plugin file
+  copy: src=rabbitmq_message_timestamp-3.6.x-3195a55a.ez
+        dest=/usr/lib/rabbitmq/lib/rabbitmq_server-3.6.1/plugins
+
+- name: enable timestamp plugin
+  shell: /usr/sbin/rabbitmq-plugins enable rabbitmq_message_timestamp
+

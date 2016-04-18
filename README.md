@@ -6,7 +6,7 @@ Ubuntu Vagrant Box with [Go](http://golang.org) + [RabbitMQ](http://www.rabbitmq
 Configured Versions
 -------------------
 - Ubuntu: 14.04
-- Go: 1.6
+- Go: 1.6.1
 
 
 Requirements for Installation
