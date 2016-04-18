@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 )
@@ -67,9 +68,14 @@ type HttpRequestMessage struct {
 	delivery amqp.Delivery
 
 	// Http request fields
-	url        string
-	headers    map[string]string
-	body       string
+	url     string
+	headers map[string]string
+	body    string
+
+	// Time when message was originally created (if timestamp plugin was installed)
+	timestamp int64
+
+	// Time when message will expire (if not provided, value is calculated from DefaultTTL setting)
 	expiration int64
 
 	// Retry history from RabbitMQ headers
@@ -384,28 +390,28 @@ func consumeHttpRequests() {
 
 func parse(rmqDelivery amqp.Delivery) (msg HttpRequestMessage, err error) {
 	type MessageFields struct {
-		Url        string
-		Headers    []map[string]string
-		Body       string
-		Expiration int64
+		Url     string
+		Headers []map[string]string
+		Body    string
 	}
 
 	var fields MessageFields
 
 	msg = HttpRequestMessage{delivery: rmqDelivery}
 
+	/*** Parse fields in RabbitMQ message body ***/
 	if err := json.Unmarshal(rmqDelivery.Body, &fields); err != nil {
 		return msg, err
 	}
 
-	// url
+	// Url
 	if len(fields.Url) == 0 {
 		err = errors.New("Field 'url' is empty or missing")
 		return msg, err
 	}
 	msg.url = fields.Url
 
-	// headers
+	// Http headers
 	msg.headers = make(map[string]string)
 	for _, m := range fields.Headers {
 		for key, val := range m {
@@ -413,18 +419,24 @@ func parse(rmqDelivery amqp.Delivery) (msg HttpRequestMessage, err error) {
 		}
 	}
 
-	// body
+	// Request body
 	msg.body = fields.Body
 
-	// message expiration
-	if fields.Expiration != 0 && fields.Expiration < time.Now().Unix() {
-		err = errors.New("Field 'expiration' is invalid.  The expiration time has already past.")
-	}
-	msg.expiration = fields.Expiration
-
-	// Examine RabbitMQ message headers to determine retry count and time of first rejection.
+	/*** Extract fields from RabbitMQ message headers ***/
 	rmqHeaders := rmqDelivery.Headers
 	if rmqHeaders != nil {
+		// Message expiration
+		expirationStr, ok := rmqHeaders["expiration"]
+		if ok {
+			expiration, err := strconv.ParseInt(expirationStr.(string), 10, 64)
+			if err != nil || (expiration != 0 && expiration < time.Now().Unix()) {
+				err = errors.New("Header value 'expiration' is invalid, or the expiration time has already past.")
+				return msg, err
+			}
+			msg.expiration = expiration
+		}
+
+		// Retry count and Time of first rejection. Will be empty if this is the first attempt.
 		deathHistory, ok := rmqHeaders["x-death"]
 		if ok {
 			// The RabbitMQ "death" history is provided as an array of 2 maps.  One map has the history for the wait queue, the other for the main queue.
@@ -451,7 +463,14 @@ func parse(rmqDelivery amqp.Delivery) (msg HttpRequestMessage, err error) {
 		}
 	}
 
-	logPrintln(Debug, "Parsed fields:", fields)
+	/*** Extract fields from RabbitMQ message properties ***/
+	// Message creation timestamp
+	if (!rmqDelivery.Timestamp.IsZero()) {
+		msg.timestamp = rmqDelivery.Timestamp.Unix()
+	}
+
+	// logPrintln(Debug, "Parsed fields:", fields)
+	logPrintln(Debug, "Message fields:", msg)
 	logPrintln(Debug, "Retry:", msg.retry)
 	logPrintln(Debug, "First Rejection Time:", msg.firstRejectionTime)
 
