@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/LinioIT/rabbitmq-worker/logfile"
 	"github.com/streadway/amqp"
 	"gopkg.in/gcfg.v1"
 	"io/ioutil"
@@ -16,28 +17,6 @@ import (
 	"syscall"
 	"time"
 )
-
-type LogLevel int
-
-const (
-	Fatal LogLevel = iota
-	Warn
-	Info
-	Debug
-)
-
-var logLevels = [...]string{
-	"Fatal",
-	"Warn",
-	"Info",
-	"Debug",
-}
-
-func logPrintln(level LogLevel, args ...interface{}) {
-	if int(level) <= config.Log.LevelInt {
-		log.Println(args...)
-	}
-}
 
 type ConfigParameters struct {
 	Connection struct {
@@ -55,9 +34,10 @@ type ConfigParameters struct {
 	Http struct {
 		Timeout int
 	}
-	Log struct {
-		Level    string
-		LevelInt int
+	Logs struct {
+		LogFile   string
+		ErrorFile string
+		Debug     bool
 	}
 }
 
@@ -97,14 +77,34 @@ var signals chan os.Signal
 func main() {
 	usageMessage()
 
-	// Start listener for OS signals
-	// quit = graceful shutdown
-	// hangup = graceful restart
 	signals = make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGHUP, syscall.SIGQUIT)
+	signal.Notify(signals, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGUSR1)
 
 	for {
-		runLoadConfig()
+		if err := loadConfig(os.Args[1]); err != nil {
+			log.Println("Could not load the configuration file:", os.Args[1], "-", err)
+			os.Exit(1)
+		}
+
+		logFile, logFileErr := logfile.New(config.Logs.LogFile, false)
+		// If error on open of the log file, send a message to stderr.
+		if logFileErr != nil {
+			log.Println("Could not open the log file:", config.Logs.LogFile, "-", logFileErr)
+		}
+
+		errorFile, err := logfile.New(config.Logs.ErrorFile, false)
+		// If error on open of the error file, send a message to stderr.
+		if err != nil {
+			log.Println("Could not open the error file:", config.Logs.ErrorFile, "-", err)
+		}
+
+		// If error on open of the log file, record it in the error file.
+		if logFileErr != nil {
+			errorFile.Write("Could not open the log file:", config.Logs.LogFile, "-", logFileErr)
+		}
+
+		logFile.Write("Configuration file loaded")
+		logFile.WriteDebug("config:", config)
 
 		runQueueCheck()
 
@@ -148,19 +148,10 @@ func usageMessage() {
 	}
 }
 
-func runLoadConfig() {
-	if err := loadConfig(); err != nil {
-		logPrintln(Fatal, "Could not load the configuration file:", err)
-		os.Exit(1)
-	}
-	logPrintln(Info, "Configuration file successfully loaded")
-	logPrintln(Debug, "config:", config)
-}
-
-func loadConfig() error {
-	configBytes, err := ioutil.ReadFile(os.Args[1])
+func loadConfig(configFile string) error {
+	configBytes, err := ioutil.ReadFile(configFile)
 	if err != nil {
-		return errors.New("Error encountered reading file " + os.Args[1])
+		return errors.New("Error encountered reading file " + configFile)
 	}
 
 	if err = gcfg.ReadStringInto(&config, string(configBytes)); err != nil {
@@ -195,21 +186,18 @@ func loadConfig() error {
 		return errors.New("Http Timeout must be between 10 and 300 seconds")
 	}
 
-	ok := false
-	for ll := 0; ll < len(logLevels); ll++ {
-		if logLevels[ll] == config.Log.Level {
-			config.Log.LevelInt = ll
-			ok = true
-		}
+	if len(config.Logs.LogFile) == 0 {
+		return errors.New("LogFile path is empty or missing")
 	}
-	if !ok {
-		return errors.New("Invalid logging level specified")
+
+	if len(config.Logs.ErrorFile) == 0 {
+		return errors.New("ErrorFile path is empty or missing")
 	}
 
 	return nil
 }
 
-/* Confirm queue configuration. Create queues if they don't exist. */
+// runQueueCheck confirms queue configuration, creating queues if they don't exist.
 func runQueueCheck() {
 	logPrintln(Info, "Checking RabbitMQ queues...")
 	if err := queueCheck(); err != nil {
@@ -465,7 +453,7 @@ func parse(rmqDelivery amqp.Delivery) (msg HttpRequestMessage, err error) {
 
 	/*** Extract fields from RabbitMQ message properties ***/
 	// Message creation timestamp
-	if (!rmqDelivery.Timestamp.IsZero()) {
+	if !rmqDelivery.Timestamp.IsZero() {
 		msg.timestamp = rmqDelivery.Timestamp.Unix()
 	}
 
