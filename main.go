@@ -41,8 +41,6 @@ type ConfigParameters struct {
 	}
 }
 
-var config = ConfigParameters{}
-
 type HttpRequestMessage struct {
 	// RabbitMQ message
 	delivery amqp.Delivery
@@ -75,46 +73,42 @@ var connectionBroken bool
 var signals chan os.Signal
 
 func main() {
+
 	usageMessage()
 
 	signals = make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGUSR1)
 
+	config := ConfigParameters{}
+
+	var logFile, errorFile logFile.Logger
+
 	for {
-		if err := loadConfig(os.Args[1]); err != nil {
-			log.Println("Could not load the configuration file:", os.Args[1], "-", err)
-			os.Exit(1)
-		}
+		loadConfig(&config, os.Args[1])
 
-		logFile, logFileErr := logfile.New(config.Logs.LogFile, false)
-		// If error on open of the log file, send a message to stderr.
-		if logFileErr != nil {
-			log.Println("Could not open the log file:", config.Logs.LogFile, "-", logFileErr)
-		}
-
-		errorFile, err := logfile.New(config.Logs.ErrorFile, false)
-		// If error on open of the error file, send a message to stderr.
-		if err != nil {
-			log.Println("Could not open the error file:", config.Logs.ErrorFile, "-", err)
-		}
-
-		// If error on open of the log file, record it in the error file.
-		if logFileErr != nil {
-			errorFile.Write("Could not open the log file:", config.Logs.LogFile, "-", logFileErr)
-		}
+		logFile, errorFile = openLogFiles(config.Logs.LogFile, config.Logs.ErrorFile)
 
 		logFile.Write("Configuration file loaded")
 		logFile.WriteDebug("config:", config)
 
-		runQueueCheck()
+		logFile.Write("Creating/Verifying RabbitMQ queues...")
+		if err := queueCheck(); err != nil {
+			errorFile.Write("Error detected while creating/verifying queue configuration:", err)
+			logFile.Write("Error detected while creating/verifying queue configuration:", err)
+			break
+		}
+		logFile.Write("Queues are ready")
 
-		consumeHttpRequests()
+		logFile.Write("Consuming queued http requests...")
+		consumeHttpRequests(config)
+		logFile.Write("Stopped consuming queued http requests")
 
 		if gracefulShutdown {
 			if connectionBroken {
-				logPrintln(Fatal, "Broken connection to RabbitMQ was detected during shutdown")
+				errorFile.Write("Broken connection to RabbitMQ was detected during graceful shutdown")
+				logFile.Write("Broken connection to RabbitMQ was detected during graceful shutdown")
 			} else {
-				logPrintln(Info, "Graceful shutdown completed")
+				logFile.Write("Graceful shutdown completed")
 			}
 			break
 		}
@@ -122,39 +116,55 @@ func main() {
 		if connectionBroken {
 			connectionBroken = false
 			gracefulRestart = false
-			logPrintln(Warn, "Broken RabbitMQ connection was detected. Reconnect will be attempted in", config.Connection.RetryDelay, "seconds...")
+			errorFile.Write("Broken RabbitMQ connection detected")
+			logFile.Write("Broken RabbitMQ connection detected. Reconnect will be attempted in", config.Connection.RetryDelay, "seconds...")
 			time.Sleep(time.Duration(config.Connection.RetryDelay) * time.Second)
 		}
 
 		if gracefulRestart {
 			gracefulRestart = false
-			logPrintln(Info, "Restarting...")
+			time.Sleep(time.Second)
+			logFile.Write("Restarting...")
 		}
+
+		logFile.Close()
+		errorFile.Close()
 	}
+
+	logFile.Close()
+	errorFile.Close()
 }
 
 func usageMessage() {
 	help := make(map[string]bool)
 	help["-h"] = true
-	help["help"] = true
-	help["-help"] = true
 	help["--help"] = true
 
 	argCnt := len(os.Args)
 
 	if argCnt != 2 || help[os.Args[1]] == true {
-		fmt.Println("Usage: rabbitmqHttpWorker CONFIG_FILE\n")
+		fmt.Println("Usage: rabbitmqHttpWorker [OPTIONS] CONFIG_FILE\n")
+		fmt.Println("	Options:")
+		fmt.Println("		-h | --help			Display this message")
+		fmt.Println("		--queues-only		Create/Verify RabbitMQ queues, then exit")
 		os.Exit(1)
 	}
 }
 
-func loadConfig(configFile string) error {
+func loadConfig(pConfig *ConfigParameters, configFile string)
+	if err := parseConfigFile(pConfig, configFile); err != nil {
+		log.Println("Could not load the configuration file:", configFile, "-", err)
+		os.Exit(1)
+	}
+}
+
+func parseConfigFile(config *ConfigParameters, configFile string) error {
 	configBytes, err := ioutil.ReadFile(configFile)
 	if err != nil {
 		return errors.New("Error encountered reading file " + configFile)
 	}
 
-	if err = gcfg.ReadStringInto(&config, string(configBytes)); err != nil {
+	if err = gcfg.ReadStringInto(config, string(configBytes)); err != nil {
 		return err
 	}
 
@@ -197,14 +207,21 @@ func loadConfig(configFile string) error {
 	return nil
 }
 
-// runQueueCheck confirms queue configuration, creating queues if they don't exist.
-func runQueueCheck() {
-	logPrintln(Info, "Checking RabbitMQ queues...")
-	if err := queueCheck(); err != nil {
-		logPrintln(Fatal, "Error detected while creating/confirming queue configuration:", err)
+func openLogFiles(logFile string, errorFile string) (logFile, errorFile logfile.Logger) {
+
+	logFile, err := logfile.New(config.Logs.LogFile, false)
+	if err != nil {
+		log.Println("Could not open the log file:", config.Logs.LogFile, "-", err)
 		os.Exit(1)
 	}
-	logPrintln(Info, "Queues are ready")
+
+	errorFile, err = logfile.New(config.Logs.ErrorFile, false)
+	if err != nil {
+		log.Println("Could not open the error file:", config.Logs.ErrorFile, "-", err)
+		os.Exit(1)
+	}
+
+	return
 }
 
 func queueCheck() error {
@@ -258,7 +275,7 @@ func queueCheck() error {
 	return nil
 }
 
-func consumeHttpRequests() {
+func consumeHttpRequests(config ConfigParameters) {
 	logPrintln(Info, "Connecting to RabbitMQ...")
 	conn, err := amqp.Dial(config.Connection.RabbitmqURL)
 	if err != nil {
