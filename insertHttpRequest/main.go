@@ -31,11 +31,11 @@ func main() {
 
 	// body := `{"url": "http://fake-response.appspot.com/?sleep=15", "headers": [{"Content-Type": "application/json"}, {"Accept-Charset": "utf-8"}], "body": "ok"}`
 
-	body := `{"url": "http://httpbin.org/status/501", "headers": [{"Content-Type": "application/json"}, {"Accept-Charset": "utf-8"}], "body": "ok"}`
+	// body := `{"url": "http://httpbin.org/status/501", "headers": [{"Content-Type": "application/json"}, {"Accept-Charset": "utf-8"}], "body": "ok"}`
 
-	// body := `{"url": "http://localhost/pause.php?delay=20", "headers": [{"Content-Type": "application/json"}, {"Accept-Charset": "utf-8"}], "body": "ok"}'
+	// body := `{"url": "http://localhost/pause.php?delay=20", "headers": [{"Content-Type": "application/json"}, {"Accept-Charset": "utf-8"}], "body": "ok"}`
 
-	// body := `{"url": "http://localhost/redirect.php?delay=7", "headers": [{"Content-Type": "application/json"}, {"Accept-Charset": "utf-8"}], "body": "ok}"
+	body := `{"url": "http://localhost/redirect.php?delay=7", "headers": [{"Content-Type": "application/json"}, {"Accept-Charset": "utf-8"}], "body": "ok"}`
 
 	headers := make(amqp.Table)
 	headers["expiration"] = strconv.Itoa(expiration)
