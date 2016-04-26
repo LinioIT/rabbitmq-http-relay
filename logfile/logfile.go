@@ -18,29 +18,15 @@ type Logger struct {
 	fatalError bool
 }
 
-func New(file string, debug bool) (Logger, error) {
-	logger := Logger{
-		filepath:   file,
-		fp:         nil,
-		debugMode:  debug,
-		fatalError: true,
-	}
-
-	if len(file) == 0 {
-		return logger, errors.New("Log filename not provided")
-	}
-
-	err := logger.open()
-	if err != nil {
-		return logger, errors.New("Could not open log file: " + logger.filepath + " - " + err.Error())
-	}
-
-	return logger, nil
-}
-
-func (l *Logger) open() error {
-	l.fatalError = true
+func (l *Logger) Open(file string, debug bool) error {
+	l.filepath = file
 	l.fp = nil
+	l.debugMode = debug
+	l.fatalError = true
+
+	if len(l.filepath) == 0 {
+		return errors.New("Log filename not provided")
+	}
 
 	fp, err := os.OpenFile(l.filepath, os.O_CREATE+os.O_WRONLY+os.O_APPEND, 0644)
 
@@ -102,9 +88,9 @@ func (l *Logger) Close() error {
 
 func (l *Logger) Reopen() error {
 	l.Close()
-	return l.open()
+	return l.Open(l.filepath, l.debugMode)
 }
 
-func (l Logger) HasFatalError() bool {
+func (l *Logger) HasFatalError() bool {
 	return l.fatalError
 }

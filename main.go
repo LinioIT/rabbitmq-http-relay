@@ -92,7 +92,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		logFile, err := logfile.New(config.Log.LogFile, flags.DebugMode)
+		err := logFile.Open(config.Log.LogFile, flags.DebugMode)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Could not open the log file:", config.Log.LogFile, "-", err)
 			os.Exit(1)
@@ -113,7 +113,7 @@ func main() {
 			break
 		}
 
-		consumeHttpRequests(config, logFile)
+		consumeHttpRequests(config, &logFile)
 
 		if gracefulShutdown {
 			if connectionBroken {
@@ -267,7 +267,7 @@ func queueCheck(config ConfigParameters) error {
 	return nil
 }
 
-func consumeHttpRequests(config ConfigParameters, logFile logfile.Logger) {
+func consumeHttpRequests(config ConfigParameters, logFile *logfile.Logger) {
 	logFile.Write("Connecting to RabbitMQ...")
 	conn, err := amqp.Dial(config.Connection.RabbitmqURL)
 	if err != nil {
@@ -357,7 +357,7 @@ func consumeHttpRequests(config ConfigParameters, logFile logfile.Logger) {
 			connectionBroken = true
 			return
 
-		// Process request to gracefully shutdown / restart
+		// Process os signals for graceful shutdown, graceful restart, or log reopen.
 		case sig := <-signals:
 			switch signalName := sig.String(); signalName {
 			case "hangup":
@@ -380,12 +380,20 @@ func consumeHttpRequests(config ConfigParameters, logFile logfile.Logger) {
 				if unacknowledgedMsgs == 0 {
 					return
 				}
+
+			case "user defined signal 1":
+				logFile.Write("Log reopen requested")
+				if err := logFile.Reopen(); err != nil {
+					logFile.Write("Error encountered during log reopen -", err)
+				} else {
+					logFile.Write("Log reopen completed")
+				}
 			}
 		}
 	}
 }
 
-func parse(rmqDelivery amqp.Delivery, logFile logfile.Logger) (msg HttpRequestMessage, err error) {
+func parse(rmqDelivery amqp.Delivery, logFile *logfile.Logger) (msg HttpRequestMessage, err error) {
 	type MessageFields struct {
 		Url     string
 		Headers []map[string]string
@@ -473,7 +481,7 @@ func parse(rmqDelivery amqp.Delivery, logFile logfile.Logger) (msg HttpRequestMe
 	return msg, nil
 }
 
-func (msg HttpRequestMessage) httpPost(ackCh chan HttpRequestMessage, timeout int, logFile logfile.Logger) {
+func (msg HttpRequestMessage) httpPost(ackCh chan HttpRequestMessage, timeout int, logFile *logfile.Logger) {
 	req, err := http.NewRequest("POST", msg.url, bytes.NewBufferString(msg.body))
 	if err != nil {
 		logFile.Write("Invalid http request:", err)
@@ -524,7 +532,7 @@ func (msg HttpRequestMessage) httpPost(ackCh chan HttpRequestMessage, timeout in
 	ackCh <- msg
 }
 
-func (msg HttpRequestMessage) acknowledge(config ConfigParameters, logFile logfile.Logger) (err error) {
+func (msg HttpRequestMessage) acknowledge(config ConfigParameters, logFile *logfile.Logger) (err error) {
 	if msg.drop {
 		logFile.WriteDebug("Sending ACK (drop) for request to url:", msg.url)
 		return msg.delivery.Ack(false)
