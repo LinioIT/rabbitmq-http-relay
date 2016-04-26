@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"github.com/LinioIT/rabbitmq-worker/logfile"
 	"github.com/streadway/amqp"
@@ -16,6 +17,11 @@ import (
 	"syscall"
 	"time"
 )
+
+type Flags struct {
+	DebugMode  bool
+	QueuesOnly bool
+}
 
 type ConfigParameters struct {
 	Connection struct {
@@ -35,7 +41,6 @@ type ConfigParameters struct {
 	}
 	Log struct {
 		LogFile string
-		Debug   bool
 	}
 }
 
@@ -71,22 +76,23 @@ var connectionBroken bool
 var signals chan os.Signal
 
 func main() {
-	getArgs()
-
 	signals = make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGUSR1)
+
+	flag.Usage = usage
+	configFile, flags := getArgs()
 
 	config := ConfigParameters{}
 
 	var logFile logfile.Logger
 
 	for {
-		if err := parseConfigFile(&config, os.Args[1]); err != nil {
-			fmt.Fprintln(os.Stderr, "Could not load the configuration file:", os.Args[1], "-", err)
+		if err := parseConfigFile(&config, configFile); err != nil {
+			fmt.Fprintln(os.Stderr, "Could not load the configuration file:", configFile, "-", err)
 			os.Exit(1)
 		}
 
-		logFile, err := logfile.New(config.Log.LogFile, config.Log.Debug)
+		logFile, err := logfile.New(config.Log.LogFile, flags.DebugMode)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Could not open the log file:", config.Log.LogFile, "-", err)
 			os.Exit(1)
@@ -101,6 +107,11 @@ func main() {
 			break
 		}
 		logFile.Write("Queues are ready")
+
+		if flags.QueuesOnly {
+			logFile.Write("\"Queues Only\" option selected, exiting program.")
+			break
+		}
 
 		consumeHttpRequests(config, logFile)
 
@@ -132,20 +143,32 @@ func main() {
 	logFile.Close()
 }
 
-func getArgs() {
-	help := make(map[string]bool)
-	help["-h"] = true
-	help["--help"] = true
+func usage() {
+	fmt.Fprintln(os.Stderr, "Usage:", os.Args[0], "[OPTION] CONFIG_FILE\n")
+	fmt.Fprintln(os.Stderr, "  --debug          Write debug-level messages to the log file")
+	fmt.Fprintln(os.Stderr, "  -h, --help       Display this message")
+	fmt.Fprintln(os.Stderr, "  --queues-only    Create/Verify RabbitMQ queues, then exit")
+	fmt.Fprintln(os.Stderr, " ")
+	os.Exit(1)
+}
 
-	argCnt := len(os.Args)
+func getArgs() (configFile string, flags Flags) {
+	flags.DebugMode = false
+	flags.QueuesOnly = false
 
-	if argCnt != 2 || help[os.Args[1]] == true {
-		fmt.Fprintln(os.Stderr, "Usage:", os.Args[0], "[OPTION] CONFIG_FILE\n")
-		fmt.Fprintln(os.Stderr, "  -h, --help       Display this message")
-		fmt.Fprintln(os.Stderr, "  --queues-only    Create/Verify RabbitMQ queues, then exit")
-		fmt.Fprintln(os.Stderr, " ")
-		os.Exit(1)
+	flag.BoolVar(&flags.DebugMode, "debug", false, "Enable debug messages - Bool")
+	flag.BoolVar(&flags.QueuesOnly, "queues-only", false, "Create/Verify queues only - Bool")
+
+	flag.Parse()
+
+	argCnt := len(flag.Args())
+	if argCnt == 1 {
+		configFile = flag.Args()[0]
+	} else {
+		usage()
 	}
+
+	return
 }
 
 func parseConfigFile(config *ConfigParameters, configFile string) error {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -46,6 +47,8 @@ func (l *Logger) open() error {
 	if err == nil {
 		l.fp = fp
 		l.fatalError = false
+
+		l.fp.WriteString(strings.Repeat("=", 60) + "\n\n")
 	}
 
 	return err
