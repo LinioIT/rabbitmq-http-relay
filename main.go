@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/md5"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -13,7 +14,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 )
@@ -51,7 +51,7 @@ type HttpRequestMessage struct {
 
 	// Message Id is either set as a RabbitMQ message header, or
 	// calculated as the md5 hash of the RabbitMQ message body
-	message_id string
+	messageId string
 
 	// Http request fields
 	url     string
@@ -336,30 +336,34 @@ func consumeHttpRequests(config ConfigParameters, logFile *logfile.Logger) {
 		case delivery := <-deliveries:
 			unacknowledgedMsgs++
 			logFile.WriteDebug("Unacknowledged message count:", unacknowledgedMsgs)
-			logFile.Write("Message received from RabbitMQ. Parsing...")
+			logFile.WriteDebug("Message received from RabbitMQ. Parsing...")
 			msg, err = parse(delivery, logFile)
 			if err != nil {
-				logFile.Write("Could not parse message:", err)
+				logFile.Write("Could not parse Message ID", msg.messageId, "-", err)
 				msg.drop = true
 				ackCh <- msg
 			} else {
-				logFile.Write("Message parsed successfully")
+				logFile.Write("Message ID", msg.messageId, "parsed successfully")
 				go msg.httpPost(ackCh, config.Http.Timeout)
 			}
 
 		// Log result of http request and ACK (drop) or NACK (retry) RabbitMQ Message
 		case msg = <-ackCh:
 			if msg.httpErr != nil {
-				logFile.Write("Message ID ### http request error -", msg.httpErr.Error())
+				logFile.Write("Message ID", msg.messageId, "http request error -", msg.httpErr.Error())
 			} else {
-				logFile.Write("Message ID ### http request success -", msg.httpStatusMsg)
+				if len(msg.httpStatusMsg) > 0 {
+					logFile.Write("Message ID", msg.messageId, "http request success -", msg.httpStatusMsg)
+				} else {
+					logFile.Write("Message ID", msg.messageId, "http request was aborted or not attempted")
+				}
 			}
 
 			if err = msg.acknowledge(config, logFile); err != nil {
-				logFile.Write("RabbitMQ acknowledgment failed for Message ID ### -", err)
+				logFile.Write("RabbitMQ acknowledgment failed for Message ID", msg.messageId, "-", err)
 				return
 			}
-			logFile.WriteDebug("RabbitMQ acknowledgment successful for Message ID ###")
+			logFile.WriteDebug("RabbitMQ acknowledgment successful for Message ID", msg.messageId)
 
 			unacknowledgedMsgs--
 			logFile.WriteDebug("Unacknowledged message count:", unacknowledgedMsgs)
@@ -443,18 +447,43 @@ func parse(rmqDelivery amqp.Delivery, logFile *logfile.Logger) (msg HttpRequestM
 	// Request body
 	msg.body = fields.Body
 
+	/*** Extract fields from RabbitMQ message properties ***/
+	// Message creation timestamp
+	if !rmqDelivery.Timestamp.IsZero() {
+		msg.timestamp = rmqDelivery.Timestamp.Unix()
+	}
+
 	/*** Extract fields from RabbitMQ message headers ***/
 	rmqHeaders := rmqDelivery.Headers
 	if rmqHeaders != nil {
+
 		// Message expiration
-		expirationStr, ok := rmqHeaders["expiration"]
+		expirationHdr, ok := rmqHeaders["expiration"]
 		if ok {
-			expiration, err := strconv.ParseInt(expirationStr.(string), 10, 64)
-			if err != nil || (expiration != 0 && expiration < time.Now().Unix()) {
-				err = errors.New("Header value 'expiration' is invalid, or the expiration time has already past.")
-				return msg, err
+			expiration, ok := expirationHdr.(int64)
+			if !ok || expiration < time.Now().Unix() {
+				logFile.Write("Header value 'expiration' is invalid, or the expiration time has already past. Default TTL will be used.")
+			} else {
+				msg.expiration = expiration
 			}
-			msg.expiration = expiration
+		}
+
+		// Message ID
+		messageIdHdr, ok := rmqHeaders["message_id"]
+		if ok {
+			messageId, ok := messageIdHdr.(string)
+			if !ok || len(messageId) == 0 {
+				logFile.Write("Header value 'message_id' is invalid or empty. The Message ID will be the md5 hash of the RabbitMQ message body.")
+			} else {
+				msg.messageId = messageId
+			}
+		}
+		// Message ID was not provided, set it as the md5 hash of the message body. Append the original timestamp, if available.
+		if len(msg.messageId) == 0 {
+			msg.messageId = fmt.Sprintf("%x", md5.Sum(rmqDelivery.Body))
+			if msg.timestamp > 0 {
+				msg.messageId += fmt.Sprintf("-%d", msg.timestamp)
+			}
 		}
 
 		// Retry count and Time of first rejection. Will be empty if this is the first attempt.
@@ -482,12 +511,6 @@ func parse(rmqDelivery amqp.Delivery, logFile *logfile.Logger) (msg HttpRequestM
 				}
 			}
 		}
-	}
-
-	/*** Extract fields from RabbitMQ message properties ***/
-	// Message creation timestamp
-	if !rmqDelivery.Timestamp.IsZero() {
-		msg.timestamp = rmqDelivery.Timestamp.Unix()
 	}
 
 	logFile.WriteDebug("Message fields:", msg)

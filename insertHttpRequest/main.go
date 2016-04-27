@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github.com/streadway/amqp"
 	"log"
-	"strconv"
 	"time"
 )
 
@@ -26,7 +25,6 @@ func main() {
 	failOnError(err, "Failed to open a channel")
 	defer ch.Close()
 
-	expiration := int(time.Now().Unix() + 85)
 	// body := `{"url": "http://httpbin.org/post", "headers": [{"Content-Type": "application/json"}, {"Accept-Charset": "utf-8"}], "body": "{\"key\": \"1230789\"}"}`
 
 	// body := `{"url": "http://fake-response.appspot.com/?sleep=15", "headers": [{"Content-Type": "application/json"}, {"Accept-Charset": "utf-8"}], "body": "ok"}`
@@ -35,10 +33,13 @@ func main() {
 
 	// body := `{"url": "http://localhost/pause.php?delay=20", "headers": [{"Content-Type": "application/json"}, {"Accept-Charset": "utf-8"}], "body": "ok"}`
 
-	body := `{"url": "http://localhost/redirect.php?delay=7", "headers": [{"Content-Type": "application/json"}, {"Accept-Charset": "utf-8"}], "body": "ok"}`
+	body := `{"url": "http://localhost/redirect.php?delay=6", "headers": [{"Content-Type": "application/json"}, {"Accept-Charset": "utf-8"}], "body": "ok"}`
 
 	headers := make(amqp.Table)
-	headers["expiration"] = strconv.Itoa(expiration)
+
+	expiration := int64(time.Now().Unix() + 85)
+	headers["expiration"] = expiration
+	headers["message_id"] = "MSGID7001234"
 
 	for i := 0; i < 1; i++ {
 		err = ch.Publish(
