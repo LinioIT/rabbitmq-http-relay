@@ -44,9 +44,14 @@ type ConfigParameters struct {
 	}
 }
 
+// HttpRequestMessage holds all info and status for a RabbitMQ message and its associated http request.
 type HttpRequestMessage struct {
 	// RabbitMQ message
 	delivery amqp.Delivery
+
+	// Message Id is either set as a RabbitMQ message header, or
+	// calculated as the md5 hash of the RabbitMQ message body
+	message_id string
 
 	// Http request fields
 	url     string
@@ -56,15 +61,20 @@ type HttpRequestMessage struct {
 	// Time when message was originally created (if timestamp plugin was installed)
 	timestamp int64
 
-	// Time when message will expire (if not provided, value is calculated from DefaultTTL setting)
+	// Time when message will expire
+	// (if not provided, value is calculated from DefaultTTL config setting)
 	expiration int64
 
 	// Retry history from RabbitMQ headers
-	retry              int
+	retryCnt           int
 	firstRejectionTime int64
 
-	// Drop / Retry Indicator
-	// Message is dropped after: Successful http request, message expiration, http response code 4XX or any other permanent error
+	// Http request status
+	httpStatusMsg string
+	httpRespBody  string
+	httpErr       error
+
+	// Drop / Retry Indicator - Set after http request attempt
 	drop bool
 }
 
@@ -286,12 +296,12 @@ func consumeHttpRequests(config ConfigParameters, logFile *logfile.Logger) {
 	defer ch.Close()
 	logFile.Write("Channel opened successfully")
 
-	logFile.Write("Setting prefetch count on the channel...")
+	logFile.Write("Setting prefetch count on the channel to", config.Queue.PrefetchCount, "...")
 	if err = ch.Qos(config.Queue.PrefetchCount, 0, false); err != nil {
 		logFile.Write("Could not set prefetch count:", err)
 		return
 	}
-	logFile.Write("Set prefetch count successfully")
+	logFile.Write("Prefetch count set successfully")
 
 	logFile.Write("Registering a consumer...")
 	deliveries, err := ch.Consume(
@@ -304,10 +314,10 @@ func consumeHttpRequests(config ConfigParameters, logFile *logfile.Logger) {
 		nil,               // args
 	)
 	if err != nil {
-		logFile.Write("Could not register a consumer:", err)
+		logFile.Write("Could not register the consumer:", err)
 		return
 	}
-	logFile.Write("Registered a consumer successfully")
+	logFile.Write("Consumer registered successfully")
 
 	closedChannelListener := make(chan *amqp.Error, 1)
 	ch.NotifyClose(closedChannelListener)
@@ -334,20 +344,26 @@ func consumeHttpRequests(config ConfigParameters, logFile *logfile.Logger) {
 				ackCh <- msg
 			} else {
 				logFile.Write("Message parsed successfully")
-				go msg.httpPost(ackCh, config.Http.Timeout, logFile)
+				go msg.httpPost(ackCh, config.Http.Timeout)
 			}
 
-		// Acknowledge RabbitMQ messages and indicate whether they should be dropped or retried
+		// Log result of http request and ACK (drop) or NACK (retry) RabbitMQ Message
 		case msg = <-ackCh:
-			logFile.Write("Acknowledging message...")
+			if msg.httpErr != nil {
+				logFile.Write("Message ID ### http request error -", msg.httpErr.Error())
+			} else {
+				logFile.Write("Message ID ### http request success -", msg.httpStatusMsg)
+			}
+
 			if err = msg.acknowledge(config, logFile); err != nil {
-				logFile.Write("Could not send message acknowledgement to RabbitMQ:", err)
+				logFile.Write("RabbitMQ acknowledgment failed for Message ID ### -", err)
 				return
 			}
-			logFile.Write("Message acknowledged successfully")
+			logFile.WriteDebug("RabbitMQ acknowledgment successful for Message ID ###")
 
 			unacknowledgedMsgs--
 			logFile.WriteDebug("Unacknowledged message count:", unacknowledgedMsgs)
+
 			if unacknowledgedMsgs == 0 && (gracefulShutdown || gracefulRestart) {
 				return
 			}
@@ -454,7 +470,7 @@ func parse(rmqDelivery amqp.Delivery, logFile *logfile.Logger) (msg HttpRequestM
 				// Get retry count
 				retryCount, retryCountOk := mainQueueDeathHistory["count"]
 				if retryCountOk {
-					msg.retry = int(retryCount.(int64))
+					msg.retryCnt = int(retryCount.(int64))
 				}
 
 				// Get time of first rejection
@@ -475,16 +491,17 @@ func parse(rmqDelivery amqp.Delivery, logFile *logfile.Logger) (msg HttpRequestM
 	}
 
 	logFile.WriteDebug("Message fields:", msg)
-	logFile.WriteDebug("Retry:", msg.retry)
+	logFile.WriteDebug("Retry:", msg.retryCnt)
 	logFile.WriteDebug("First Rejection Time:", msg.firstRejectionTime)
 
 	return msg, nil
 }
 
-func (msg HttpRequestMessage) httpPost(ackCh chan HttpRequestMessage, timeout int, logFile *logfile.Logger) {
+func (msg HttpRequestMessage) httpPost(ackCh chan HttpRequestMessage, timeout int) {
 	req, err := http.NewRequest("POST", msg.url, bytes.NewBufferString(msg.body))
 	if err != nil {
-		logFile.Write("Invalid http request:", err)
+		msg.httpErr = err
+		msg.httpStatusMsg = "Invalid http request: " + err.Error()
 		msg.drop = true
 		ackCh <- msg
 		return
@@ -496,39 +513,41 @@ func (msg HttpRequestMessage) httpPost(ackCh chan HttpRequestMessage, timeout in
 		req.Header.Set(hkey, hval)
 	}
 
-	logFile.Write("Http POST Request url:", msg.url)
 	resp, err := client.Do(req)
 
 	if err != nil {
-		logFile.Write("Error on http POST:", err)
+		msg.httpErr = err
+		msg.httpStatusMsg = "Error on http POST: " + err.Error()
 		ackCh <- msg
 		return
 	} else {
 		htmlData, err := ioutil.ReadAll(resp.Body)
+
+		// The response body is not currently used to evaluate success of the http request. Therefore, an error here is not fatal.
+		// This will change if functionality is added to evaluate the response body.
 		if err != nil {
-			logFile.Write("Error encountered when reading POST response body:", err)
+			msg.httpRespBody = "Error encountered when reading POST response body"
 		} else {
-			logFile.WriteDebug("POST response status code:", resp.StatusCode)
-			logFile.WriteDebug("POST response body:", string(htmlData))
+			msg.httpStatusMsg = resp.Status
+			msg.httpRespBody = string(htmlData)
 			resp.Body.Close()
 		}
 	}
 
 	if resp.StatusCode >= 400 && resp.StatusCode <= 499 {
-		logFile.Write("4XX status on http POST (no retry):", resp.Status)
+		msg.httpErr = errors.New("4XX status on http POST (no retry): " + resp.Status)
 		msg.drop = true
 		ackCh <- msg
 		return
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
-		logFile.Write("Success on http POST:", resp.Status)
 		msg.drop = true
 		ackCh <- msg
 		return
 	}
 
-	logFile.Write("Error on http POST:", resp.Status)
+	msg.httpErr = errors.New("Error on http POST: " + resp.Status)
 	ackCh <- msg
 }
 
