@@ -153,15 +153,6 @@ func main() {
 	logFile.Close()
 }
 
-func usage() {
-	fmt.Fprintln(os.Stderr, "Usage:", os.Args[0], "[OPTION] CONFIG_FILE\n")
-	fmt.Fprintln(os.Stderr, "  --debug          Write debug-level messages to the log file")
-	fmt.Fprintln(os.Stderr, "  -h, --help       Display this message")
-	fmt.Fprintln(os.Stderr, "  --queues-only    Create/Verify RabbitMQ queues, then exit")
-	fmt.Fprintln(os.Stderr, " ")
-	os.Exit(1)
-}
-
 func getArgs() (configFile string, flags Flags) {
 	flags.DebugMode = false
 	flags.QueuesOnly = false
@@ -179,6 +170,15 @@ func getArgs() (configFile string, flags Flags) {
 	}
 
 	return
+}
+
+func usage() {
+	fmt.Fprintln(os.Stderr, "Usage:", os.Args[0], "[OPTION] CONFIG_FILE\n")
+	fmt.Fprintln(os.Stderr, "  --debug          Write debug-level messages to the log file")
+	fmt.Fprintln(os.Stderr, "  -h, --help       Display this message")
+	fmt.Fprintln(os.Stderr, "  --queues-only    Create/Verify RabbitMQ queues, then exit")
+	fmt.Fprintln(os.Stderr, " ")
+	os.Exit(1)
 }
 
 func parseConfigFile(config *ConfigParameters, configFile string) error {
@@ -199,24 +199,24 @@ func parseConfigFile(config *ConfigParameters, configFile string) error {
 		return errors.New("Queue Name is empty or missing")
 	}
 
-	if config.Queue.WaitDelay < 30 || config.Queue.WaitDelay > 3600 {
-		return errors.New("Queue Wait Delay must be between 30 and 3600 seconds")
+	if config.Queue.WaitDelay < 1 {
+		return errors.New("Queue Wait Delay must be at least 1 second")
 	}
 
-	if config.Message.DefaultTTL < 3600 || config.Message.DefaultTTL > 259200 {
-		return errors.New("Message Default TTL must be between 3600 and 259200 seconds")
+	if config.Message.DefaultTTL < 1 {
+		return errors.New("Message Default TTL must be at least 1 second")
 	}
 
-	if config.Queue.PrefetchCount < 1 || config.Queue.PrefetchCount > 100 {
-		return errors.New("PrefetchCount must be between 1 and 100")
+	if config.Queue.PrefetchCount < 1 {
+		return errors.New("PrefetchCount cannot be negative")
 	}
 
-	if config.Connection.RetryDelay < 10 || config.Connection.RetryDelay > 300 {
-		return errors.New("Connection Retry Delay must be between 10 and 300 seconds")
+	if config.Connection.RetryDelay < 5 {
+		return errors.New("Connection Retry Delay must be at least 5 seconds")
 	}
 
-	if config.Http.Timeout < 10 || config.Http.Timeout > 300 {
-		return errors.New("Http Timeout must be between 10 and 300 seconds")
+	if config.Http.Timeout < 5 {
+		return errors.New("Http Timeout must be at least 5 seconds")
 	}
 
 	if len(config.Log.LogFile) == 0 {
@@ -330,6 +330,7 @@ func consumeHttpRequests(config ConfigParameters, logFile *logfile.Logger) {
 
 	unacknowledgedMsgs := 0
 
+	// Asynchronous event processing loop
 	for {
 		select {
 		// Process next available message from RabbitMQ
@@ -372,7 +373,7 @@ func consumeHttpRequests(config ConfigParameters, logFile *logfile.Logger) {
 				return
 			}
 
-		// Abort if a problem is detected with the RabbitMQ connection. The main() loop will attempt to reconnect.
+		// Return if a problem is detected with the RabbitMQ connection. The main() loop will attempt to reconnect.
 		case <-closedChannelListener:
 			connectionBroken = true
 			return
@@ -408,6 +409,14 @@ func consumeHttpRequests(config ConfigParameters, logFile *logfile.Logger) {
 				} else {
 					logFile.Write("Log reopen completed")
 				}
+			}
+		}
+
+		if logFile.HasFatalError() && !gracefulShutdown {
+			fmt.Fprintln(os.Stderr, "Fatal log error detected. Starting graceful shutdown...")
+			gracefulShutdown = true
+			if unacknowledgedMsgs == 0 {
+				break
 			}
 		}
 	}
