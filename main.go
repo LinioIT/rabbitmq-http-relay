@@ -7,9 +7,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/LinioIT/rabbitmq-worker/config"
 	"github.com/LinioIT/rabbitmq-worker/logfile"
 	"github.com/streadway/amqp"
-	"gopkg.in/gcfg.v1"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -21,27 +21,6 @@ import (
 type Flags struct {
 	DebugMode  bool
 	QueuesOnly bool
-}
-
-type ConfigParameters struct {
-	Connection struct {
-		RabbitmqURL string
-		RetryDelay  int
-	}
-	Queue struct {
-		Name          string
-		WaitDelay     int
-		PrefetchCount int
-	}
-	Message struct {
-		DefaultTTL int
-	}
-	Http struct {
-		Timeout int
-	}
-	Log struct {
-		LogFile string
-	}
 }
 
 // HttpRequestMessage holds all info and status for a RabbitMQ message and its associated http request.
@@ -92,12 +71,12 @@ func main() {
 	flag.Usage = usage
 	configFile, flags := getArgs()
 
-	config := ConfigParameters{}
+	config := config.ConfigParameters{}
 
 	var logFile logfile.Logger
 
 	for {
-		if err := parseConfigFile(&config, configFile); err != nil {
+		if err := config.ParseConfigFile(configFile); err != nil {
 			fmt.Fprintln(os.Stderr, "Could not load the configuration file:", configFile, "-", err)
 			os.Exit(1)
 		}
@@ -112,7 +91,7 @@ func main() {
 		logFile.WriteDebug("config:", config)
 
 		logFile.Write("Creating/Verifying RabbitMQ queues...")
-		if err := queueCheck(config); err != nil {
+		if err := queueCheck(&config); err != nil {
 			logFile.Write("Error detected while creating/verifying queues:", err)
 			break
 		}
@@ -123,7 +102,7 @@ func main() {
 			break
 		}
 
-		consumeHttpRequests(config, &logFile)
+		consumeHttpRequests(&config, &logFile)
 
 		if gracefulShutdown {
 			if connectionBroken {
@@ -181,52 +160,7 @@ func usage() {
 	os.Exit(1)
 }
 
-func parseConfigFile(config *ConfigParameters, configFile string) error {
-	configBytes, err := ioutil.ReadFile(configFile)
-	if err != nil {
-		return errors.New("Error encountered reading file " + configFile)
-	}
-
-	if err = gcfg.ReadStringInto(config, string(configBytes)); err != nil {
-		return err
-	}
-
-	if len(config.Connection.RabbitmqURL) == 0 {
-		return errors.New("RabbitMQ URL is empty or missing")
-	}
-
-	if len(config.Queue.Name) == 0 {
-		return errors.New("Queue Name is empty or missing")
-	}
-
-	if config.Queue.WaitDelay < 1 {
-		return errors.New("Queue Wait Delay must be at least 1 second")
-	}
-
-	if config.Message.DefaultTTL < 1 {
-		return errors.New("Message Default TTL must be at least 1 second")
-	}
-
-	if config.Queue.PrefetchCount < 1 {
-		return errors.New("PrefetchCount cannot be negative")
-	}
-
-	if config.Connection.RetryDelay < 5 {
-		return errors.New("Connection Retry Delay must be at least 5 seconds")
-	}
-
-	if config.Http.Timeout < 5 {
-		return errors.New("Http Timeout must be at least 5 seconds")
-	}
-
-	if len(config.Log.LogFile) == 0 {
-		return errors.New("LogFile path is empty or missing")
-	}
-
-	return nil
-}
-
-func queueCheck(config ConfigParameters) error {
+func queueCheck(config *config.ConfigParameters) error {
 	waitQueue := config.Queue.Name + "_wait"
 
 	conn, err := amqp.Dial(config.Connection.RabbitmqURL)
@@ -277,7 +211,7 @@ func queueCheck(config ConfigParameters) error {
 	return nil
 }
 
-func consumeHttpRequests(config ConfigParameters, logFile *logfile.Logger) {
+func consumeHttpRequests(config *config.ConfigParameters, logFile *logfile.Logger) {
 	logFile.Write("Connecting to RabbitMQ...")
 	conn, err := amqp.Dial(config.Connection.RabbitmqURL)
 	if err != nil {
@@ -344,7 +278,13 @@ func consumeHttpRequests(config ConfigParameters, logFile *logfile.Logger) {
 				msg.drop = true
 				ackCh <- msg
 			} else {
-				logFile.Write("Message ID", msg.messageId, "parsed successfully")
+				if msg.retryCnt == 0 {
+					logFile.Write("Message ID", msg.messageId, "parsed successfully")
+				} else {
+					logFile.Write("Message ID", msg.messageId, "parsed successfully - retry", msg.retryCnt)
+				}
+
+				// Start goroutine to process http request
 				go msg.httpPost(ackCh, config.Http.Timeout)
 			}
 
@@ -583,9 +523,10 @@ func (msg HttpRequestMessage) httpPost(ackCh chan HttpRequestMessage, timeout in
 	ackCh <- msg
 }
 
-func (msg HttpRequestMessage) acknowledge(config ConfigParameters, logFile *logfile.Logger) (err error) {
+func (msg HttpRequestMessage) acknowledge(config *config.ConfigParameters, logFile *logfile.Logger) (err error) {
 	if msg.drop {
-		logFile.WriteDebug("Sending ACK (drop) for request to url:", msg.url)
+		logFile.Write("Dropping Message ID", msg.messageId)
+		logFile.WriteDebug("Sending ACK (drop) for Message ID", msg.messageId)
 		return msg.delivery.Ack(false)
 	}
 
@@ -602,10 +543,12 @@ func (msg HttpRequestMessage) acknowledge(config ConfigParameters, logFile *logf
 	}
 
 	if expired {
-		logFile.WriteDebug("Sending ACK (drop) for EXPIRED request to url:", msg.url)
+		logFile.Write("Message ID", msg.messageId, "has EXPIRED")
+		logFile.WriteDebug("Sending ACK (drop) for EXPIRED Message ID", msg.messageId)
 		return msg.delivery.Ack(false)
 	}
 
-	logFile.WriteDebug("Sending NACK (retry) for request to url:", msg.url)
+	logFile.Write("Message ID", msg.messageId, "will be retried")
+	logFile.WriteDebug("Sending NACK (retry) for Message ID", msg.messageId)
 	return msg.delivery.Nack(false, false)
 }
