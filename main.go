@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/LinioIT/rabbitmq-worker/config"
 	"github.com/LinioIT/rabbitmq-worker/logfile"
+	"github.com/LinioIT/rabbitmq-worker/rabbitmq"
 	"github.com/streadway/amqp"
 	"io/ioutil"
 	"net/http"
@@ -65,50 +66,79 @@ var connectionBroken bool
 var signals chan os.Signal
 
 func main() {
+	var firstTime bool = true
+	var logFile logfile.Logger
+
 	signals = make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGUSR1)
 
+	// Parse command line arguments
+	// func usage() provides help message for the command line
 	flag.Usage = usage
 	configFile, flags := getArgs()
 
 	config := config.ConfigParameters{}
 
-	var logFile logfile.Logger
-
+	// Processing loop is re-executed anytime the RabbitMQ connection is broken, or a graceful restart is requested.
 	for {
 		if err := config.ParseConfigFile(configFile); err != nil {
 			fmt.Fprintln(os.Stderr, "Could not load the configuration file:", configFile, "-", err)
-			os.Exit(1)
+			break
 		}
 
 		err := logFile.Open(config.Log.LogFile, flags.DebugMode)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Could not open the log file:", config.Log.LogFile, "-", err)
-			os.Exit(1)
+			break
 		}
 
 		logFile.Write("Configuration file loaded")
 		logFile.WriteDebug("config:", config)
 
 		logFile.Write("Creating/Verifying RabbitMQ queues...")
-		if err := queueCheck(&config); err != nil {
+		if err := rabbitmq.QueueCheck(&config); err != nil {
 			logFile.Write("Error detected while creating/verifying queues:", err)
-			break
+			connectionBroken = true
+		} else {
+			logFile.Write("Queues are ready")
 		}
-		logFile.Write("Queues are ready")
 
 		if flags.QueuesOnly {
 			logFile.Write("\"Queues Only\" option selected, exiting program.")
 			break
 		}
 
-		consumeHttpRequests(&config, &logFile)
+		// RabbitMQ queue verification must pass on the initial connection attempt
+		if firstTime && connectionBroken {
+			logFile.Write("Initial RabbitMQ queue validation failed, exiting program.")
+			break
+		} else {
+			firstTime = false
+		}
+
+		// Process RabbitMQ messages
+		if !connectionBroken {
+			consumeHttpRequests(&config, &logFile)
+		} else {
+			// Was a graceful shutdown requested?
+			select {
+			case sig := <-signals:
+				if sig.String() == "quit" {
+					logFile.Write("Shutdown request received, exiting program.")
+					gracefulShutdown = true
+				}
+			default:
+			}
+			if gracefulShutdown {
+				break
+			}
+		}
 
 		if gracefulShutdown {
 			if connectionBroken {
-				logFile.Write("Broken connection to RabbitMQ was detected during graceful shutdown")
+				logFile.Write("Broken connection to RabbitMQ was detected during graceful shutdown, exiting program.")
 			} else {
-				logFile.Write("Graceful shutdown completed")
+				logFile.Write("Graceful shutdown completed.")
 			}
 			break
 		}
@@ -122,7 +152,7 @@ func main() {
 
 		if gracefulRestart {
 			gracefulRestart = false
-			time.Sleep(time.Second)
+			time.Sleep(2 * time.Second)
 			logFile.Write("Restarting...")
 		}
 
@@ -160,106 +190,19 @@ func usage() {
 	os.Exit(1)
 }
 
-func queueCheck(config *config.ConfigParameters) error {
-	waitQueue := config.Queue.Name + "_wait"
-
-	conn, err := amqp.Dial(config.Connection.RabbitmqURL)
-	if err != nil {
-		return errors.New("Could not connect to RabbitMQ")
-	}
-	defer conn.Close()
-
-	ch, err := conn.Channel()
-	if err != nil {
-		return errors.New("Could not open a RabbitMQ channel")
-	}
-	defer ch.Close()
-
-	// Create main queue
-	args := make(amqp.Table)
-	args["x-dead-letter-exchange"] = ""
-	args["x-dead-letter-routing-key"] = waitQueue
-	_, err = ch.QueueDeclare(
-		config.Queue.Name, // name
-		true,              // durable
-		false,             // delete when unused
-		false,             // exclusive
-		false,             // no-wait
-		args,              // arguments
-	)
-	if err != nil {
-		return errors.New("Could not declare queue " + config.Queue.Name)
-	}
-
-	// Create wait queue with dead-lettering back to main queue
-	args = make(amqp.Table)
-	args["x-message-ttl"] = 1000 * int32(config.Queue.WaitDelay)
-	args["x-dead-letter-exchange"] = ""
-	args["x-dead-letter-routing-key"] = config.Queue.Name
-	_, err = ch.QueueDeclare(
-		waitQueue, // name
-		true,      // durable
-		false,     // delete when unused
-		false,     // exclusive
-		false,     // no-wait
-		args,      // arguments
-	)
-	if err != nil {
-		return errors.New("Could not declare queue " + waitQueue)
-	}
-
-	return nil
-}
-
 func consumeHttpRequests(config *config.ConfigParameters, logFile *logfile.Logger) {
-	logFile.Write("Connecting to RabbitMQ...")
-	conn, err := amqp.Dial(config.Connection.RabbitmqURL)
-	if err != nil {
-		logFile.Write("Could not connect to RabbitMQ:", err)
-		return
-	}
-	defer conn.Close()
-	logFile.Write("Connected successfully")
-
-	logFile.Write("Opening a channel to RabbitMQ...")
-	ch, err := conn.Channel()
-	if err != nil {
-		logFile.Write("Could not open a channel:", err)
-		return
-	}
-	defer ch.Close()
-	logFile.Write("Channel opened successfully")
-
-	logFile.Write("Setting prefetch count on the channel to", config.Queue.PrefetchCount, "...")
-	if err = ch.Qos(config.Queue.PrefetchCount, 0, false); err != nil {
-		logFile.Write("Could not set prefetch count:", err)
-		return
-	}
-	logFile.Write("Prefetch count set successfully")
-
-	logFile.Write("Registering a consumer...")
-	deliveries, err := ch.Consume(
-		config.Queue.Name, // queue
-		"",                // consumer
-		false,             // auto-ack
-		false,             // exclusive
-		false,             // no-local
-		false,             // no-wait
-		nil,               // args
-	)
-	if err != nil {
-		logFile.Write("Could not register the consumer:", err)
-		return
-	}
-	logFile.Write("Consumer registered successfully")
-
-	closedChannelListener := make(chan *amqp.Error, 1)
-	ch.NotifyClose(closedChannelListener)
-	logFile.Write("Started 'closed channel' listener")
-
 	var msg HttpRequestMessage
+	var rmqConn rabbitmq.RMQConnection
 
-	// Go channel to coordinate acknowledgment of RabbitMQ messages
+	deliveries, closedChannelListener, err := rmqConn.Open(config, logFile)
+	defer rmqConn.Close()
+	if err != nil {
+		logFile.Write(err)
+		connectionBroken = true
+		return
+	}
+
+	// Create channel to coordinate acknowledgment of RabbitMQ messages
 	ackCh := make(chan HttpRequestMessage, config.Queue.PrefetchCount)
 
 	unacknowledgedMsgs := 0
@@ -267,6 +210,7 @@ func consumeHttpRequests(config *config.ConfigParameters, logFile *logfile.Logge
 	// Asynchronous event processing loop
 	for {
 		select {
+
 		// Process next available message from RabbitMQ
 		case delivery := <-deliveries:
 			unacknowledgedMsgs++
@@ -313,7 +257,8 @@ func consumeHttpRequests(config *config.ConfigParameters, logFile *logfile.Logge
 				return
 			}
 
-		// Return if a problem is detected with the RabbitMQ connection. The main() loop will attempt to reconnect.
+		// Was a problem detected with the RabbitMQ connection?
+		// If yes, the main() loop will attempt to reconnect.
 		case <-closedChannelListener:
 			connectionBroken = true
 			return
