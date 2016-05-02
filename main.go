@@ -15,19 +15,18 @@ import (
 )
 
 type Flags struct {
-	DebugMode  bool
-	QueuesOnly bool
+	DebugMode        bool
+	QueuesOnly       bool
+	gracefulShutdown bool
+	gracefulRestart  bool
+	connectionBroken bool
+	cleanStart       bool
 }
-
-var gracefulShutdown bool
-var gracefulRestart bool
-var connectionBroken bool
 
 // Channel to receive asynchronous signals for graceful shutdown / restart
 var signals chan os.Signal
 
 func main() {
-	var firstTime bool = true
 	var logFile logfile.Logger
 
 	signals = make(chan os.Signal, 1)
@@ -37,6 +36,7 @@ func main() {
 	// func usage() provides help message for the command line
 	flag.Usage = usage
 	configFile, flags := getArgs()
+	flags.cleanStart = true
 
 	config := config.ConfigParameters{}
 
@@ -59,7 +59,7 @@ func main() {
 		logFile.Write("Creating/Verifying RabbitMQ queues...")
 		if err := rabbitmq.QueueCheck(&config); err != nil {
 			logFile.Write("Error detected while creating/verifying queues:", err)
-			connectionBroken = true
+			flags.connectionBroken = true
 		} else {
 			logFile.Write("Queues are ready")
 		}
@@ -70,51 +70,18 @@ func main() {
 		}
 
 		// RabbitMQ queue verification must pass on the initial connection attempt
-		if firstTime && connectionBroken {
+		if flags.cleanStart && flags.connectionBroken {
 			logFile.Write("Initial RabbitMQ queue validation failed, exiting program.")
 			break
-		} else {
-			firstTime = false
 		}
 
 		// Process RabbitMQ messages
-		if !connectionBroken {
-			consumeHttpRequests(&config, &logFile)
-		} else {
-			// Was a graceful shutdown requested?
-			select {
-			case sig := <-signals:
-				if sig.String() == "quit" {
-					logFile.Write("Shutdown request received, exiting program.")
-					gracefulShutdown = true
-				}
-			default:
-			}
-			if gracefulShutdown {
-				break
-			}
+		if !flags.connectionBroken {
+			consumeHttpRequests(&config, &flags, &logFile)
 		}
 
-		if gracefulShutdown {
-			if connectionBroken {
-				logFile.Write("Broken connection to RabbitMQ was detected during graceful shutdown, exiting program.")
-			} else {
-				logFile.Write("Graceful shutdown completed.")
-			}
+		if checkShutdown(&flags, signals, &logFile, config.Connection.RetryDelay) {
 			break
-		}
-
-		if connectionBroken {
-			connectionBroken = false
-			gracefulRestart = false
-			logFile.Write("Broken RabbitMQ connection detected. Reconnect will be attempted in", config.Connection.RetryDelay, "seconds...")
-			time.Sleep(time.Duration(config.Connection.RetryDelay) * time.Second)
-		}
-
-		if gracefulRestart {
-			gracefulRestart = false
-			time.Sleep(2 * time.Second)
-			logFile.Write("Restarting...")
 		}
 
 		logFile.Close()
@@ -124,9 +91,6 @@ func main() {
 }
 
 func getArgs() (configFile string, flags Flags) {
-	flags.DebugMode = false
-	flags.QueuesOnly = false
-
 	flag.BoolVar(&flags.DebugMode, "debug", false, "Enable debug messages - Bool")
 	flag.BoolVar(&flags.QueuesOnly, "queues-only", false, "Create/Verify queues only - Bool")
 
@@ -151,7 +115,7 @@ func usage() {
 	os.Exit(1)
 }
 
-func consumeHttpRequests(config *config.ConfigParameters, logFile *logfile.Logger) {
+func consumeHttpRequests(config *config.ConfigParameters, flags *Flags, logFile *logfile.Logger) {
 	var msg message.HttpRequestMessage
 	var rmqConn rabbitmq.RMQConnection
 
@@ -160,7 +124,7 @@ func consumeHttpRequests(config *config.ConfigParameters, logFile *logfile.Logge
 	defer rmqConn.Close()
 	if err != nil {
 		logFile.Write(err)
-		connectionBroken = true
+		flags.connectionBroken = true
 		return
 	}
 
@@ -217,17 +181,17 @@ func consumeHttpRequests(config *config.ConfigParameters, logFile *logfile.Logge
 			unacknowledgedMsgs--
 			logFile.WriteDebug("Unacknowledged message count:", unacknowledgedMsgs)
 
-			if unacknowledgedMsgs == 0 && (gracefulShutdown || gracefulRestart) {
+			if unacknowledgedMsgs == 0 && (flags.gracefulShutdown || flags.gracefulRestart) {
 				return
 			}
 
 		// Was a problem detected with the RabbitMQ connection?
 		// If yes, the main() loop will attempt to reconnect.
 		case <-closedChannelListener:
-			connectionBroken = true
+			flags.connectionBroken = true
 			return
 
-		// Process os signals for graceful shutdown, graceful restart, or log reopen.
+		// Process os signals for graceful restart, graceful shutdown, or log reopen.
 		case sig := <-signals:
 			switch signalName := sig.String(); signalName {
 			case "hangup":
@@ -236,17 +200,18 @@ func consumeHttpRequests(config *config.ConfigParameters, logFile *logfile.Logge
 				// Substitute a dummy delivery channel to halt consumption from RabbitMQ
 				deliveries = make(chan amqp.Delivery, 1)
 
-				gracefulRestart = true
+				flags.gracefulRestart = true
 				if unacknowledgedMsgs == 0 {
 					return
 				}
+
 			case "quit":
 				logFile.Write("Graceful shutdown requested")
 
 				// Substitute a dummy delivery channel to halt consumption from RabbitMQ
 				deliveries = make(chan amqp.Delivery, 1)
 
-				gracefulShutdown = true
+				flags.gracefulShutdown = true
 				if unacknowledgedMsgs == 0 {
 					return
 				}
@@ -261,12 +226,51 @@ func consumeHttpRequests(config *config.ConfigParameters, logFile *logfile.Logge
 			}
 		}
 
-		if logFile.HasFatalError() && !gracefulShutdown {
+		if logFile.HasFatalError() && !flags.gracefulShutdown {
 			fmt.Fprintln(os.Stderr, "Fatal log error detected. Starting graceful shutdown...")
-			gracefulShutdown = true
+			flags.gracefulShutdown = true
 			if unacknowledgedMsgs == 0 {
 				break
 			}
 		}
 	}
+}
+
+func checkShutdown(flags *Flags, signals chan os.Signal, logFile *logfile.Logger, retryDelay int) bool {
+	flags.cleanStart = false
+
+	// Was a graceful shutdown requested?
+	select {
+	case sig := <-signals:
+		if sig.String() == "quit" {
+			logFile.Write("Shutdown request received, exiting program.")
+			return true
+		}
+	default:
+	}
+
+	if flags.gracefulShutdown {
+		if flags.connectionBroken {
+			logFile.Write("Broken connection to RabbitMQ was detected during graceful shutdown, exiting program.")
+		} else {
+			logFile.Write("Graceful shutdown completed.")
+		}
+		return true
+	}
+
+	if flags.connectionBroken {
+		flags.connectionBroken = false
+		flags.gracefulRestart = false
+		logFile.Write("Broken RabbitMQ connection detected. Reconnect will be attempted in", retryDelay, "seconds...")
+		time.Sleep(time.Duration(retryDelay) * time.Second)
+	}
+
+	if flags.gracefulRestart {
+		flags.gracefulRestart = false
+		flags.cleanStart = true
+		time.Sleep(2 * time.Second)
+		logFile.Write("Restarting...")
+	}
+
+	return false
 }
