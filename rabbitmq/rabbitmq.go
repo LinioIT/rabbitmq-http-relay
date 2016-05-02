@@ -89,7 +89,7 @@ func (rmq *RMQConnection) Open(config *config.ConfigParameters, logFile *logfile
 	}
 	logFile.Write("Channel opened successfully")
 
-	logFile.Write("Setting prefetch count on the channel to", config.Queue.PrefetchCount, "...")
+	logFile.Write("Setting prefetch count to", config.Queue.PrefetchCount, "for the channel...")
 	if err = rmq.ch.Qos(config.Queue.PrefetchCount, 0, false); err != nil {
 		rmqErr := errors.New("Could not set prefetch count: " + err.Error())
 		return deliveries, closedChannelListener, rmqErr
@@ -130,8 +130,8 @@ func (rmq *RMQConnection) Close() {
 
 func Acknowledge(msg message.HttpRequestMessage, config *config.ConfigParameters, logFile *logfile.Logger) (err error) {
 	if msg.Drop {
-		logFile.Write("Dropping Message ID", msg.MessageId)
-		logFile.WriteDebug("Sending ACK (drop) for Message ID", msg.MessageId)
+		logFile.Write("Message ID", msg.MessageId, "- Dropping")
+		logFile.WriteDebug("Message ID", msg.MessageId, "- Sending ACK (drop)")
 		return msg.Delivery.Ack(false)
 	}
 
@@ -148,12 +148,12 @@ func Acknowledge(msg message.HttpRequestMessage, config *config.ConfigParameters
 	}
 
 	if expired {
-		logFile.Write("Message ID", msg.MessageId, "has EXPIRED")
-		logFile.WriteDebug("Sending ACK (drop) for EXPIRED Message ID", msg.MessageId)
+		logFile.Write("Message ID", msg.MessageId, "- EXPIRED")
+		logFile.WriteDebug("Message ID", msg.MessageId, "- Sending ACK (drop) for EXPIRED message")
 		return msg.Delivery.Ack(false)
 	}
 
-	logFile.Write("Message ID", msg.MessageId, "will be retried")
-	logFile.WriteDebug("Sending NACK (retry) for Message ID", msg.MessageId)
+	logFile.Write("Message ID", msg.MessageId, "- Queueing for retry")
+	logFile.WriteDebug("Message ID", msg.MessageId, "- Sending NACK (retry)")
 	return msg.Delivery.Nack(false, false)
 }

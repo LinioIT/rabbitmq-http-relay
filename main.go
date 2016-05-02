@@ -54,7 +54,7 @@ func main() {
 		}
 
 		logFile.Write("Configuration file loaded")
-		logFile.WriteDebug("config:", config)
+		logFile.WriteDebug("Config settings:\n" + config.String())
 
 		logFile.Write("Creating/Verifying RabbitMQ queues...")
 		if err := rabbitmq.QueueCheck(&config); err != nil {
@@ -140,19 +140,18 @@ func consumeHttpRequests(config *config.ConfigParameters, flags *Flags, logFile 
 		// Consume message from RabbitMQ
 		case delivery := <-deliveries:
 			unacknowledgedMsgs++
-			logFile.WriteDebug("Unacknowledged message count:", unacknowledgedMsgs)
-			logFile.WriteDebug("Message received from RabbitMQ. Parsing...")
+			logFile.WriteDebug("Message received from RabbitMQ. Unacknowledged message count:", unacknowledgedMsgs)
 			msg := message.HttpRequestMessage{}
 			err = msg.Parse(delivery, logFile)
 			if err != nil {
-				logFile.Write("Could not parse Message ID", msg.MessageId, "-", err)
+				logFile.Write("Message ID", msg.MessageId, "- Parse failed:", err)
 				msg.Drop = true
 				ackCh <- msg
 			} else {
 				if msg.RetryCnt == 0 {
-					logFile.Write("Message ID", msg.MessageId, "parsed successfully")
+					logFile.Write("Message ID", msg.MessageId, "- Parsed successfully")
 				} else {
-					logFile.Write("Message ID", msg.MessageId, "parsed successfully - retry", msg.RetryCnt)
+					logFile.Write("Message ID", msg.MessageId, "- Parsed successfully, Retry Count =", msg.RetryCnt)
 				}
 
 				// Start goroutine to process http request
@@ -163,20 +162,20 @@ func consumeHttpRequests(config *config.ConfigParameters, flags *Flags, logFile 
 		// The message will either be ACKed (dropped) or NACKed (retried)
 		case msg = <-ackCh:
 			if msg.HttpErr != nil {
-				logFile.Write("Message ID", msg.MessageId, "http request error -", msg.HttpErr.Error())
+				logFile.Write("Message ID", msg.MessageId, "- Http request error:", msg.HttpErr.Error())
 			} else {
 				if len(msg.HttpStatusMsg) > 0 {
-					logFile.Write("Message ID", msg.MessageId, "http request success -", msg.HttpStatusMsg)
+					logFile.Write("Message ID", msg.MessageId, "- Http request success:", msg.HttpStatusMsg)
 				} else {
-					logFile.Write("Message ID", msg.MessageId, "http request was aborted or not attempted")
+					logFile.Write("Message ID", msg.MessageId, "- Http request was aborted or not attempted")
 				}
 			}
 
 			if err = rabbitmq.Acknowledge(msg, config, logFile); err != nil {
-				logFile.Write("RabbitMQ acknowledgment failed for Message ID", msg.MessageId, "-", err)
+				logFile.Write("Message ID", msg.MessageId, "- RabbitMQ acknowledgment failed:", err)
 				return
 			}
-			logFile.WriteDebug("RabbitMQ acknowledgment successful for Message ID", msg.MessageId)
+			logFile.WriteDebug("Message ID", msg.MessageId, "- RabbitMQ acknowledgment successful")
 
 			unacknowledgedMsgs--
 			logFile.WriteDebug("Unacknowledged message count:", unacknowledgedMsgs)

@@ -58,6 +58,46 @@ func (msg *HttpRequestMessage) Parse(rmqDelivery amqp.Delivery, logFile *logfile
 
 	msg.Delivery = rmqDelivery
 
+	// Get message creation timestamp, if any
+	if !rmqDelivery.Timestamp.IsZero() {
+		msg.Timestamp = rmqDelivery.Timestamp.Unix()
+	}
+
+	// Generate a default Message ID, in case one was not provided.
+	// Set it as the md5 hash of the RabbitMQ message body, appended with the original timestamp if available.
+	msg.MessageId = fmt.Sprintf("%x", md5.Sum(rmqDelivery.Body))
+	if msg.Timestamp > 0 {
+		msg.MessageId += fmt.Sprintf("-%d", msg.Timestamp)
+	}
+
+	/*** Extract fields from RabbitMQ message headers ***/
+	rmqHeaders := rmqDelivery.Headers
+	if rmqHeaders != nil {
+
+		// Message ID
+		messageIdHdr, ok := rmqHeaders["message_id"]
+		if ok {
+			messageId, ok := messageIdHdr.(string)
+			if ok && len(messageId) > 0 {
+				msg.MessageId = messageId
+			}
+		}
+
+		// Message expiration
+		expirationHdr, ok := rmqHeaders["expiration"]
+		if ok {
+			expiration, ok := expirationHdr.(int64)
+			if !ok || expiration < time.Now().Unix() {
+				return errors.New("Header value 'expiration' is invalid, or the expiration time has already past.")
+			} else {
+				msg.Expiration = expiration
+			}
+		}
+
+		// Get retry count and time of first rejection. Both values will be zero if this is the first attempt.
+		msg.RetryCnt, msg.FirstRejectionTime = getRetryInfo(rmqHeaders)
+	}
+
 	/*** Parse fields in RabbitMQ message body ***/
 	if err := json.Unmarshal(rmqDelivery.Body, &fields); err != nil {
 		return err
@@ -65,8 +105,7 @@ func (msg *HttpRequestMessage) Parse(rmqDelivery amqp.Delivery, logFile *logfile
 
 	// Url
 	if len(fields.Url) == 0 {
-		err = errors.New("Field 'url' is empty or missing")
-		return err
+		return errors.New("Field 'url' is empty or missing")
 	}
 	msg.Url = fields.Url
 
@@ -81,52 +120,15 @@ func (msg *HttpRequestMessage) Parse(rmqDelivery amqp.Delivery, logFile *logfile
 	// Request body
 	msg.Body = fields.Body
 
-	/*** Extract fields from RabbitMQ message properties ***/
-	// Message creation timestamp
-	if !rmqDelivery.Timestamp.IsZero() {
-		msg.Timestamp = rmqDelivery.Timestamp.Unix()
+	logFile.WriteDebug("Message ID", msg.MessageId, "- Url:", msg.Url)
+	logFile.WriteDebug("Message ID", msg.MessageId, "- Headers:", msg.Headers)
+	logFile.WriteDebug("Message ID", msg.MessageId, "- Body:", msg.Body)
+	logFile.WriteDebug("Message ID", msg.MessageId, "- Expiration:", msg.Expiration)
+
+	if msg.RetryCnt > 0 {
+		logFile.WriteDebug("Message ID", msg.MessageId, "- Retry Count:", msg.RetryCnt)
+		logFile.WriteDebug("Message ID", msg.MessageId, "- First Rejection Time:", msg.FirstRejectionTime)
 	}
-
-	/*** Extract fields from RabbitMQ message headers ***/
-	rmqHeaders := rmqDelivery.Headers
-	if rmqHeaders != nil {
-
-		// Message expiration
-		expirationHdr, ok := rmqHeaders["expiration"]
-		if ok {
-			expiration, ok := expirationHdr.(int64)
-			if !ok || expiration < time.Now().Unix() {
-				logFile.Write("Header value 'expiration' is invalid, or the expiration time has already past. Default TTL will be used.")
-			} else {
-				msg.Expiration = expiration
-			}
-		}
-
-		// Message ID
-		messageIdHdr, ok := rmqHeaders["message_id"]
-		if ok {
-			messageId, ok := messageIdHdr.(string)
-			if !ok || len(messageId) == 0 {
-				logFile.Write("Header value 'message_id' is invalid or empty. The Message ID will be the md5 hash of the RabbitMQ message body.")
-			} else {
-				msg.MessageId = messageId
-			}
-		}
-		// Message ID was not provided, set it as the md5 hash of the message body. Append the original timestamp, if available.
-		if len(msg.MessageId) == 0 {
-			msg.MessageId = fmt.Sprintf("%x", md5.Sum(rmqDelivery.Body))
-			if msg.Timestamp > 0 {
-				msg.MessageId += fmt.Sprintf("-%d", msg.Timestamp)
-			}
-		}
-
-		// Get retry count and time of first rejection. Both values will be zero if this is the first attempt.
-		msg.RetryCnt, msg.FirstRejectionTime = getRetryInfo(rmqHeaders)
-	}
-
-	logFile.WriteDebug("Message fields:", msg)
-	logFile.WriteDebug("Retry:", msg.RetryCnt)
-	logFile.WriteDebug("First Rejection Time:", msg.FirstRejectionTime)
 
 	return nil
 }
