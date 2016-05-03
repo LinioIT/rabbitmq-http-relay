@@ -235,7 +235,8 @@ func consumeHttpRequests(config *config.ConfigParameters, flags *Flags, logFile 
 	}
 }
 
-func checkShutdown(flags *Flags, signals chan os.Signal, logFile *logfile.Logger, retryDelay int) bool {
+func checkShutdown(flags *Flags, signals chan os.Signal, logFile *logfile.Logger, retryDelay int) (quit bool) {
+	quit = true
 	flags.cleanStart = false
 
 	// Was a graceful shutdown requested?
@@ -243,7 +244,7 @@ func checkShutdown(flags *Flags, signals chan os.Signal, logFile *logfile.Logger
 	case sig := <-signals:
 		if sig.String() == "quit" {
 			logFile.Write("Shutdown request received, exiting program.")
-			return true
+			return
 		}
 	default:
 	}
@@ -254,8 +255,10 @@ func checkShutdown(flags *Flags, signals chan os.Signal, logFile *logfile.Logger
 		} else {
 			logFile.Write("Graceful shutdown completed.")
 		}
-		return true
+		return
 	}
+
+	quit = false
 
 	if flags.connectionBroken {
 		flags.connectionBroken = false
@@ -271,5 +274,5 @@ func checkShutdown(flags *Flags, signals chan os.Signal, logFile *logfile.Logger
 		logFile.Write("Restarting...")
 	}
 
-	return false
+	return
 }
