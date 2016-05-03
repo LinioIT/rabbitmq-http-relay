@@ -166,6 +166,7 @@ func consumeHttpRequests(config *config.ConfigParameters, flags *Flags, logFile 
 			} else {
 				if len(msg.HttpStatusMsg) > 0 {
 					logFile.Write("Message ID", msg.MessageId, "- Http request success:", msg.HttpStatusMsg)
+					logFile.WriteDebug("Message ID", msg.MessageId, "- Response Body:", msg.HttpRespBody)
 				} else {
 					logFile.Write("Message ID", msg.MessageId, "- Http request was aborted or not attempted")
 				}
