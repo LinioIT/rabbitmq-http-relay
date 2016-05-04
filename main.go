@@ -7,7 +7,6 @@ import (
 	"github.com/LinioIT/rabbitmq-worker/logfile"
 	"github.com/LinioIT/rabbitmq-worker/message"
 	"github.com/LinioIT/rabbitmq-worker/rabbitmq"
-	"github.com/streadway/amqp"
 	"os"
 	"os/signal"
 	"syscall"
@@ -69,9 +68,9 @@ func main() {
 			break
 		}
 
-		// RabbitMQ queue verification must pass on the initial connection attempt
+		// Queue verification must pass on the first attempt after starting or after a graceful restart.
 		if flags.cleanStart && flags.connectionBroken {
-			logFile.Write("Initial RabbitMQ queue validation failed, exiting program.")
+			logFile.Write("Initial RabbitMQ queue verification failed, exiting program.")
 			break
 		}
 
@@ -128,7 +127,7 @@ func consumeHttpRequests(config *config.ConfigParameters, flags *Flags, logFile 
 		return
 	}
 
-	// Create channel to coordinate acknowledgment of RabbitMQ messages
+	// Create channel to acknowledge processed RabbitMQ messages
 	ackCh := make(chan message.HttpRequestMessage, config.Queue.PrefetchCount)
 
 	unacknowledgedMsgs := 0
@@ -172,7 +171,10 @@ func consumeHttpRequests(config *config.ConfigParameters, flags *Flags, logFile 
 				}
 			}
 
-			if err = rabbitmq.Acknowledge(msg, config, logFile); err != nil {
+			msg.CheckExpiration(config.Queue.WaitDelay, config.Message.DefaultTTL)
+
+			// Acknowledge RabbitMQ message to trigger drop or retry
+			if err = rabbitmq.Acknowledge(msg, logFile); err != nil {
 				logFile.Write("Message ID", msg.MessageId, "- RabbitMQ acknowledgment failed:", err)
 				return
 			}
@@ -198,7 +200,7 @@ func consumeHttpRequests(config *config.ConfigParameters, flags *Flags, logFile 
 				logFile.Write("Graceful restart requested")
 
 				// Substitute a dummy delivery channel to halt consumption from RabbitMQ
-				deliveries = make(chan amqp.Delivery, 1)
+				deliveries = rabbitmq.GetDeliveryChan(1)
 
 				flags.gracefulRestart = true
 				if unacknowledgedMsgs == 0 {
@@ -209,7 +211,7 @@ func consumeHttpRequests(config *config.ConfigParameters, flags *Flags, logFile 
 				logFile.Write("Graceful shutdown requested")
 
 				// Substitute a dummy delivery channel to halt consumption from RabbitMQ
-				deliveries = make(chan amqp.Delivery, 1)
+				deliveries = rabbitmq.GetDeliveryChan(1)
 
 				flags.gracefulShutdown = true
 				if unacknowledgedMsgs == 0 {

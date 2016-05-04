@@ -6,7 +6,6 @@ import (
 	"github.com/LinioIT/rabbitmq-worker/logfile"
 	"github.com/LinioIT/rabbitmq-worker/message"
 	"github.com/streadway/amqp"
-	"time"
 )
 
 type RMQConnection struct {
@@ -128,32 +127,24 @@ func (rmq *RMQConnection) Close() {
 	}
 }
 
-func Acknowledge(msg message.HttpRequestMessage, config *config.ConfigParameters, logFile *logfile.Logger) (err error) {
+func Acknowledge(msg message.HttpRequestMessage, logFile *logfile.Logger) (err error) {
+	if msg.Expired {
+		logFile.Write("Message ID", msg.MessageId, "- EXPIRED")
+		logFile.WriteDebug("Message ID", msg.MessageId, "- Sending ACK (drop) for EXPIRED message")
+		return msg.Delivery.Ack(false)
+	}
+
 	if msg.Drop {
 		logFile.Write("Message ID", msg.MessageId, "- Dropping")
 		logFile.WriteDebug("Message ID", msg.MessageId, "- Sending ACK (drop)")
 		return msg.Delivery.Ack(false)
 	}
 
-	// Drop message if it will expire before the next retry
-	expired := false
-	if msg.Expiration > 0 {
-		// Use the expiration time included with the message, if one was provided
-		expired = msg.Expiration < (time.Now().Unix() + int64(config.Queue.WaitDelay))
-	} else {
-		// Otherwise, compare the default TTL to the time the message was first rejected
-		if msg.FirstRejectionTime > 0 {
-			expired = (msg.FirstRejectionTime + int64(config.Message.DefaultTTL)) < (time.Now().Unix() + int64(config.Queue.WaitDelay))
-		}
-	}
-
-	if expired {
-		logFile.Write("Message ID", msg.MessageId, "- EXPIRED")
-		logFile.WriteDebug("Message ID", msg.MessageId, "- Sending ACK (drop) for EXPIRED message")
-		return msg.Delivery.Ack(false)
-	}
-
 	logFile.Write("Message ID", msg.MessageId, "- Queueing for retry")
 	logFile.WriteDebug("Message ID", msg.MessageId, "- Sending NACK (retry)")
 	return msg.Delivery.Nack(false, false)
+}
+
+func GetDeliveryChan(size int) <-chan amqp.Delivery {
+	return make(chan amqp.Delivery, size)
 }

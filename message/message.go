@@ -33,8 +33,8 @@ type HttpRequestMessage struct {
 	// Time when message was originally created (if timestamp plugin was installed)
 	Timestamp int64
 
-	// Time when message will expire
-	// (if not provided, value is calculated from DefaultTTL config setting)
+	// Time when message will expire, as provided in RabbitMQ message header.
+	// If not provided, this value is 0 and the expiration is calculated from the DefaultTTL setting.
 	Expiration int64
 
 	// Retry history from RabbitMQ headers
@@ -46,8 +46,9 @@ type HttpRequestMessage struct {
 	HttpRespBody  string
 	HttpErr       error
 
-	// Drop / Retry Indicator - Set after http request attempt
-	Drop bool
+	// Message disposition
+	Drop    bool // Drop/Retry indicator
+	Expired bool // Message expired
 }
 
 func (msg *HttpRequestMessage) Parse(rmqDelivery amqp.Delivery, logFile *logfile.Logger) (err error) {
@@ -167,13 +168,13 @@ func getRetryInfo(rmqHeaders amqp.Table) (retryCnt int, firstRejectionTime int64
 	return
 }
 
-func (msg HttpRequestMessage) HttpPost(ackCh chan HttpRequestMessage, timeout int) {
+func (msg *HttpRequestMessage) HttpPost(ackCh chan HttpRequestMessage, timeout int) {
 	req, err := http.NewRequest("POST", msg.Url, bytes.NewBufferString(msg.Body))
 	if err != nil {
 		msg.HttpErr = err
 		msg.HttpStatusMsg = "Invalid http request: " + err.Error()
 		msg.Drop = true
-		ackCh <- msg
+		ackCh <- *msg
 		return
 	}
 
@@ -188,7 +189,7 @@ func (msg HttpRequestMessage) HttpPost(ackCh chan HttpRequestMessage, timeout in
 	if err != nil {
 		msg.HttpErr = err
 		msg.HttpStatusMsg = "Error on http POST: " + err.Error()
-		ackCh <- msg
+		ackCh <- *msg
 		return
 	} else {
 		htmlData, err := ioutil.ReadAll(resp.Body)
@@ -207,16 +208,30 @@ func (msg HttpRequestMessage) HttpPost(ackCh chan HttpRequestMessage, timeout in
 	if resp.StatusCode >= 400 && resp.StatusCode <= 499 {
 		msg.HttpErr = errors.New("4XX status on http POST (no retry): " + resp.Status)
 		msg.Drop = true
-		ackCh <- msg
+		ackCh <- *msg
 		return
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
 		msg.Drop = true
-		ackCh <- msg
+		ackCh <- *msg
 		return
 	}
 
 	msg.HttpErr = errors.New("Error on http POST: " + resp.Status)
-	ackCh <- msg
+	ackCh <- *msg
+}
+
+func (msg *HttpRequestMessage) CheckExpiration(waitDelay, defaultTTL int) {
+	// Use the expiration time included with the message, if one was provided
+	if msg.Expiration > 0 {
+		msg.Expired = msg.Expiration < (time.Now().Unix() + int64(waitDelay))
+	} else {
+		// Otherwise, compare the default TTL to the time the message was first rejected
+		if msg.FirstRejectionTime > 0 {
+			msg.Expired = (msg.FirstRejectionTime + int64(defaultTTL)) < (time.Now().Unix() + int64(waitDelay))
+		}
+	}
+
+	return
 }
