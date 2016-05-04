@@ -22,7 +22,10 @@ type Flags struct {
 	cleanStart       bool
 }
 
-// Channel to receive asynchronous signals for graceful shutdown / restart
+// Channel to receive asynchronous signals:
+//   QUIT - graceful shutdown
+//   HUP - graceful restart
+//   USR1 - log reopen
 var signals chan os.Signal
 
 func main() {

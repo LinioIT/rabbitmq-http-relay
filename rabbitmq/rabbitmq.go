@@ -67,6 +67,47 @@ func QueueCheck(config *config.ConfigParameters) error {
 	return nil
 }
 
+// QueueDelete removes RabbitMQ queues if they are not currently in use
+func QueueDelete(config *config.ConfigParameters) error {
+	waitQueue := config.Queue.Name + "_wait"
+
+	conn, err := amqp.Dial(config.Connection.RabbitmqURL)
+	if err != nil {
+		return errors.New("Could not connect to RabbitMQ")
+	}
+	defer conn.Close()
+
+	ch, err := conn.Channel()
+	if err != nil {
+		return errors.New("Could not open a RabbitMQ channel")
+	}
+	defer ch.Close()
+
+	// Delete main queue
+	_, err = ch.QueueDelete(
+		config.Queue.Name, // name
+		true,              // if unused
+		true,              // if empty
+		false,             // no wait
+	)
+	if err != nil {
+		return errors.New("Could not delete queue " + config.Queue.Name + " - " + err.Error())
+	}
+
+	// Delete wait queue
+	_, err = ch.QueueDelete(
+		waitQueue, // name
+		true,      // if unused
+		true,      // if empty
+		false,     // no wait
+	)
+	if err != nil {
+		return errors.New("Could not delete queue " + waitQueue + " - " + err.Error())
+	}
+
+	return nil
+}
+
 func (rmq *RMQConnection) Open(config *config.ConfigParameters, logFile *logfile.Logger) (<-chan amqp.Delivery, <-chan *amqp.Error, error) {
 	var deliveries <-chan amqp.Delivery
 	closedChannelListener := make(chan *amqp.Error, 1)
