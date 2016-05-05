@@ -1,0 +1,30 @@
+============================================================
+
+2016-05-05T17:18:23Z - Configuration file loaded
+2016-05-05T17:18:23Z - Config settings:
+[Connection]
+  RabbitmqURL = "amqp://rmq:rmq@localhost:5672/"
+  RetryDelay = 30
+[Queue]
+  Name = "notifier"
+  WaitDelay = 40
+  PrefetchCount = 3
+[Message]
+  DefaultTTL = 86400
+[Http]
+  Timeout = 30
+[Log]
+  LogFile = "rabbitmq-worker.log"
+2016-05-05T17:18:23Z - Creating/Verifying RabbitMQ queues...
+2016-05-05T17:18:23Z - Queues are ready
+2016-05-05T17:18:23Z - Connecting to RabbitMQ...
+2016-05-05T17:18:23Z - Connected successfully
+2016-05-05T17:18:23Z - Opening a channel to RabbitMQ...
+2016-05-05T17:18:23Z - Channel opened successfully
+2016-05-05T17:18:23Z - Setting prefetch count to 3 for the channel...
+2016-05-05T17:18:23Z - Prefetch count set successfully
+2016-05-05T17:18:23Z - Registering a consumer...
+2016-05-05T17:18:23Z - Consumer registered successfully
+2016-05-05T17:18:23Z - Started 'closed channel' listener
+2016-05-05T17:18:36Z - Graceful shutdown requested
+2016-05-05T17:18:36Z - Graceful shutdown completed.

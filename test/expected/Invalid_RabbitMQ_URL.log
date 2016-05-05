@@ -1,0 +1,6 @@
+============================================================
+
+2016-05-05T21:15:44Z - Configuration file loaded
+2016-05-05T21:15:44Z - Creating/Verifying RabbitMQ queues...
+2016-05-05T21:15:44Z - Error detected while creating/verifying queues: Could not connect to RabbitMQ
+2016-05-05T21:15:44Z - Initial RabbitMQ queue verification failed, exiting program.

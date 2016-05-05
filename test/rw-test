@@ -1,0 +1,187 @@
+#!/bin/bash
+
+let testno=0
+let passedno=0
+let failedno=0
+TESTNAME=""
+
+WORKER=rabbitmq-worker
+CONFIG=rabbitmq-worker.conf
+CONFIG_TEST=rabbitmq-worker.conf_test
+LOG=rabbitmq-worker.log
+STDERR_LOG=stderr.log
+ERROR_LOG=error.log
+RESET_ERROR_LOG=reset_error.log
+
+RED="\e[91m"
+GREEN="\e[92m"
+ENDCOLOR="\e[39m"
+
+function Reset {
+    if    cp $CONFIG_TEST $CONFIG > $RESET_ERROR_LOG 2>&1  &&
+          deleteQueue $CONFIG > $RESET_ERROR_LOG 2>&1  &&
+          rm -f $LOG $STDERR_LOG > $RESET_ERROR_LOG 2>&1  &&
+          touch $LOG
+    then  return
+    else  echo -e $RED
+          echo Could not reset environment, check $RESET_ERROR_LOG
+          echo Aborting tests!
+          echo -e $ENDCOLOR
+          exit
+    fi
+}
+
+function Cleanup {
+    rm -f $CONFIG $LOG > /dev/null 2>&1
+    deleteQueue $CONFIG > /dev/null 2>&1
+}
+
+function StartTest {
+    let testno=$testno+1
+    TESTNAME=$1
+    echo -n "$(echo "Test $testno - $TESTNAME...                             " |  cut -c1-40)"
+    Reset
+}
+
+function DiffPrep {
+    sed 's/^[0-9\-]\{10\}T[0-9:]\{8\}\([+-][0-9:]\{5\}\|Z\) - /<<DATE>> - /' $1 | grep -v '^\s*$' | grep -v "^==*$" > $2
+}
+
+function LogDumpHeader {
+    echo "********************************************************************************" >> $ERROR_LOG
+}
+
+function LogDump {
+    echo "Test $testno - \"$TESTNAME\" EXPECTED $1:" >> $ERROR_LOG
+    echo -e $GREEN >> $ERROR_LOG
+    cat $2 | sed 's/^/    /' >> $ERROR_LOG
+    echo -e $ENDCOLOR >> $ERROR_LOG
+    echo "Test $testno - \"$TESTNAME\" ACTUAL $1:" >> $ERROR_LOG
+    echo -e $RED >> $ERROR_LOG
+    cat $3 | sed 's/^/    /' >> $ERROR_LOG
+    echo -e $ENDCOLOR >> $ERROR_LOG
+    echo >> $ERROR_LOG
+}
+
+function CheckResults {
+    EXPECTED_LOG=expected/$(echo "$TESTNAME" | sed 's/ /_/g').log
+    EXPECTED_STDERR=expected/$(echo "$TESTNAME" | sed 's/ /_/g').stderr
+
+    # Verify that the "expected log" file exists. If not, create a blank one.
+    if    [[ ! -e $EXPECTED_LOG ]]
+    then  touch $EXPECTED_LOG
+    fi
+
+    let ERROR_COUNT=0
+
+    # Compare the actual and expected log output
+    DiffPrep $EXPECTED_LOG expected_log.tmp
+    DiffPrep $LOG actual_log.tmp
+    DIFF=$(diff -q expected_log.tmp actual_log.tmp 2>&1)
+    if    [[ x${DIFF}x != xx ]]
+    then  let ERROR_COUNT=$ERROR_COUNT+1
+          LogDumpHeader
+          LogDump "log output" expected_log.tmp actual_log.tmp
+    fi
+    rm -f expected_log.tmp actual_log.tmp
+
+    # Compare the actual and expected stderr output, if any
+    if    [[ -s $STDERR_LOG  ||  -s $EXPECTED_STDERR ]]
+    then  touch $STDERR_LOG
+          touch $EXPECTED_STDERR
+          DiffPrep $EXPECTED_STDERR expected_stderr.tmp
+          DiffPrep $STDERR_LOG actual_stderr.tmp
+          DIFF=$(diff -q expected_stderr.tmp actual_stderr.tmp 2>&1)
+          if    [[ x${DIFF}x != xx ]]
+          then  let ERROR_COUNT=$ERROR_COUNT+1
+                if    [[ $ERROR_COUNT == 1 ]]
+                then  LogDumpHeader
+                fi
+                LogDump "stderr output" expected_stderr.tmp actual_stderr.tmp
+          fi
+    fi
+    rm -f expected_stderr.tmp actual_stderr.tmp
+
+    if    [[ $ERROR_COUNT -eq 0 ]]
+    then  let passedno=$passedno+1
+          echo -e "\e[92mPASSED\e[39m"
+    else  let failedno=$failedno+1
+          echo -e "\e[91mFAILED\e[39m"
+    fi
+}
+
+function SignalWorker {
+    let PID=$(ps -ef | grep " $WORKER " | grep -v grep | sed 's/  */ /' | cut -d" " -f2) 2> /dev/null
+    if   [[ x$PID != "x" ]]
+    then  kill -$1 $PID
+    fi
+}
+
+# START
+clear
+rm -f $ERROR_LOG
+echo -n Starting tests -" "
+date
+echo
+
+#################
+#   T E S T S   #
+#################
+
+StartTest "Create Queues"
+$WORKER --queues-only $CONFIG 2> $STDERR_LOG
+CheckResults
+
+StartTest "Startup"
+$WORKER $CONFIG 2> $STDERR_LOG &
+sleep 1
+SignalWorker QUIT
+sleep 1
+CheckResults
+
+StartTest "Debug Startup"
+$WORKER --debug $CONFIG 2> $STDERR_LOG &
+sleep 1
+SignalWorker QUIT
+sleep 1
+CheckResults
+
+StartTest "Help"
+$WORKER --help $CONFIG 2> $STDERR_LOG
+CheckResults
+
+StartTest "Bad Option"
+$WORKER --derp $CONFIG 2> $STDERR_LOG
+CheckResults
+
+StartTest "Missing Config File"
+$WORKER no_config_file 2> $STDERR_LOG
+CheckResults
+
+StartTest "Missing Queue Name"
+grep -v "^Name = " $CONFIG > config.tmp
+mv config.tmp $CONFIG
+$WORKER $CONFIG 2> $STDERR_LOG
+CheckResults
+
+StartTest "Invalid RabbitMQ URL"
+sed 's/^RabbitmqURL =.*$/RabbitmqURL = dummy/' $CONFIG > config.tmp
+mv config.tmp $CONFIG
+$WORKER $CONFIG 2> $STDERR_LOG
+CheckResults
+
+#############
+#   E N D   #
+#############
+Cleanup
+echo
+echo -e "\e[92m# of passed tests: $passedno\e[39m"
+echo -e "\e[91m# of failed tests: $failedno\e[39m"
+if    [[ $failedno -gt 0 ]]
+then  echo -e "\e[91m(see $ERROR_LOG for error details)\e[39m"
+fi
+echo
+echo -n Tests completed -" "
+date
+echo
+exit

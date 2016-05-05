@@ -1,0 +1,5 @@
+Usage: rabbitmq-worker [OPTION] CONFIG_FILE
+
+  --debug          Write debug-level messages to the log file
+  -h, --help       Display this message
+  --queues-only    Create/Verify RabbitMQ queues, then exit
