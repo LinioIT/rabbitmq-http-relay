@@ -7,10 +7,10 @@
   RetryDelay = 30
 [Queue]
   Name = "notifier"
-  WaitDelay = 40
+  WaitDelay = 10
   PrefetchCount = 3
 [Message]
-  DefaultTTL = 86400
+  DefaultTTL = 60
 [Http]
   Timeout = 30
 [Log]

@@ -4,12 +4,12 @@ RetryDelay = 30        # Delay before attempting to restore a broken connection,
 
 [Queue]
 Name = notifier
-WaitDelay = 40         # Message TTL for the wait queue, in seconds (delay between http request attempts)
+WaitDelay = 10         # Message TTL for the wait queue, in seconds (delay between http request attempts)
 PrefetchCount = 3      # Maximum number of simultaneous unacknowledged messages. This also controls the maximum number of http request threads.
                        # If set to 0, no maximum is enforced.  This is NOT recommended.
 
 [Message]
-DefaultTTL = 86400     # Default message TTL, in seconds (total time a message can remain in RabbitMQ before being expired and dropped)
+DefaultTTL = 60        # Default message TTL, in seconds (total time a message can remain in RabbitMQ before being expired and dropped)
                        # This default is overridden if the "expiration" header of the RabbitMQ message is set as a Unix timestamp
 
 [Http]

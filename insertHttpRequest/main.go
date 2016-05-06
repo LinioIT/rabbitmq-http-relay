@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"github.com/streadway/amqp"
 	"log"
+	"os"
+	"strconv"
 	"time"
 )
 
@@ -25,35 +27,39 @@ func main() {
 	failOnError(err, "Failed to open a channel")
 	defer ch.Close()
 
-	// body := `{"url": "http://httpbin.org/post", "headers": [{"Content-Type": "application/json"}, {"Accept-Charset": "utf-8"}], "body": "{\"key\": \"1230789\"}"}`
-
-	// body := `{"url": "http://fake-response.appspot.com/?sleep=15", "headers": [{"Content-Type": "application/json"}, {"Accept-Charset": "utf-8"}], "body": "ok"}`
-
-	// body := `{"url": "http://httpbin.org/status/501", "headers": [{"Content-Type": "application/json"}, {"Accept-Charset": "utf-8"}], "body": "ok"}`
-
-	// body := `{"url": "http://localhost/pause.php?delay=20", "headers": [{"Content-Type": "application/json"}, {"Accept-Charset": "utf-8"}], "body": "ok"}`
-
-	body := `{"url": "http://localhost/redirect.php?delay=6", "headers": [{"Content-Type": "application/json"}, {"Accept-Charset": "utf-8"}], "body": "ok"}`
-
 	headers := make(amqp.Table)
 
-	expiration := int64(time.Now().Unix() + 85)
-	headers["expiration"] = expiration
-	headers["message_id"] = "MSGID7001234"
-
-	for i := 0; i < 1; i++ {
-		err = ch.Publish(
-			"",         // exchange
-			"notifier", // routing key
-			false,      // mandatory
-			false,      // immediate
-			amqp.Publishing{
-				Headers:      headers,
-				ContentType:  "application/json",
-				DeliveryMode: uint8(persistentDeliveryMode),
-				Body:         []byte(body),
-			})
-		log.Printf(" [x] Sent %s", body)
-		failOnError(err, "Failed to publish a message")
+	var url string
+	if len(os.Args) > 1 {
+		url = os.Args[1]
+	} else {
+		url = "http://httpbin.org/post"
 	}
+
+	body := `{"url": "` + url + `", "headers": [{"Content-Type": "application/json"}, {"Accept-Charset": "utf-8"}], "body": "{\"key\": \"1230789\"}"}`
+
+	if len(os.Args) > 2 {
+		headers["message_id"] = os.Args[2]
+	}
+
+	if len(os.Args) > 3 {
+		msg_ttl, err := strconv.ParseInt(os.Args[3], 10, 64)
+		if err == nil {
+			headers["expiration"] = int64(time.Now().Unix()) + msg_ttl
+		}
+	}
+
+	err = ch.Publish(
+		"",         // exchange
+		"notifier", // routing key
+		false,      // mandatory
+		false,      // immediate
+		amqp.Publishing{
+			Headers:      headers,
+			ContentType:  "application/json",
+			DeliveryMode: uint8(persistentDeliveryMode),
+			Body:         []byte(body),
+		})
+	log.Println("Published the http request message")
+	failOnError(err, "Failed to publish the http request message")
 }

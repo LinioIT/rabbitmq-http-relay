@@ -1,0 +1,18 @@
+============================================================
+
+2016-05-05T22:24:40Z - Configuration file loaded
+2016-05-05T22:24:40Z - Creating/Verifying RabbitMQ queues...
+2016-05-05T22:24:40Z - Queues are ready
+2016-05-05T22:24:40Z - Connecting to RabbitMQ...
+2016-05-05T22:24:40Z - Connected successfully
+2016-05-05T22:24:40Z - Opening a channel to RabbitMQ...
+2016-05-05T22:24:40Z - Channel opened successfully
+2016-05-05T22:24:40Z - Setting prefetch count to 3 for the channel...
+2016-05-05T22:24:40Z - Prefetch count set successfully
+2016-05-05T22:24:40Z - Registering a consumer...
+2016-05-05T22:24:40Z - Consumer registered successfully
+2016-05-05T22:24:40Z - Started 'closed channel' listener
+2016-05-05T22:24:49Z - Log reopen requested
+============================================================
+
+2016-05-05T22:24:49Z - Log reopen completed

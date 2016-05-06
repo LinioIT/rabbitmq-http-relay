@@ -1,0 +1,24 @@
+2016-05-06T03:40:24Z - Configuration file loaded
+2016-05-06T03:40:24Z - Creating/Verifying RabbitMQ queues...
+2016-05-06T03:40:24Z - Queues are ready
+2016-05-06T03:40:24Z - Connecting to RabbitMQ...
+2016-05-06T03:40:24Z - Connected successfully
+2016-05-06T03:40:24Z - Opening a channel to RabbitMQ...
+2016-05-06T03:40:24Z - Channel opened successfully
+2016-05-06T03:40:24Z - Setting prefetch count to 3 for the channel...
+2016-05-06T03:40:24Z - Prefetch count set successfully
+2016-05-06T03:40:24Z - Registering a consumer...
+2016-05-06T03:40:24Z - Consumer registered successfully
+2016-05-06T03:40:24Z - Started 'closed channel' listener
+2016-05-06T03:40:25Z - Message ID MSGID0001 - Parsed successfully
+2016-05-06T03:40:26Z - Message ID MSGID0002 - Parsed successfully
+2016-05-06T03:40:27Z - Message ID MSGID0003 - Parsed successfully
+2016-05-06T03:40:31Z - Message ID MSGID0001 - Http request success: 200 OK
+2016-05-06T03:40:31Z - Message ID MSGID0001 - Dropping
+2016-05-06T03:40:31Z - Message ID MSGID0004 - Parsed successfully
+2016-05-06T03:40:32Z - Message ID MSGID0002 - Http request success: 200 OK
+2016-05-06T03:40:32Z - Message ID MSGID0002 - Dropping
+2016-05-06T03:40:33Z - Message ID MSGID0003 - Http request success: 200 OK
+2016-05-06T03:40:33Z - Message ID MSGID0003 - Dropping
+2016-05-06T03:40:37Z - Message ID MSGID0004 - Http request success: 200 OK
+2016-05-06T03:40:37Z - Message ID MSGID0004 - Dropping
