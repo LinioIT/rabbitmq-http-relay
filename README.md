@@ -29,6 +29,23 @@ These steps have been tested with Ubuntu 14.04, but should work for any Linux di
 - Add the RabbitMQ user, "rmq", and assign permissions:  
 `sudo rabbitmqctl add_user rmq rmq`  
 `sudo rabbitmqctl set_permissions rmq '.*' '.*' '.*'`
+- Download and install Go: [Downloads - The Go Programming Language](https://golang.org/dl/)  
+  Follow instructions to:
+  - Add the Go bin directory to the PATH environment variable
+  - Setup a workspace
+  - Set the GOPATH environment variable to point to the workspace.  
+  Also:
+  - Add "$GOPATH/bin" to PATH.  This should appear in the shell startup script immediately after GOPATH is set.
+- Install Git: [Setup Git](https://help.github.com/articles/set-up-git/)
+- Download Go packages:  
+  - go get gopkg.in/gcfg.v1
+  - go get github.com/streadway/amqp
+  - go get github.com/LinioIT/rabbitmq-worker
+- Build and install executables:
+  - go install github.com/LinioIT/rabbitmq-worker
+  - go install github.com/LinioIT/rabbitmq-worker/insertHttpRequest
+  - go install github.com/LinioIT/rabbitmq-worker/deleteQueue
+
 
 Testing
 -------
