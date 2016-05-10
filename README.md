@@ -34,8 +34,7 @@ These steps have been tested with Ubuntu 14.04, but should work for any Linux di
   - Add the Go bin directory to the PATH environment variable
   - Setup a workspace
   - Set the GOPATH environment variable to point to the workspace.  
-  Also:
-  - Add "$GOPATH/bin" to PATH.  This should appear in the shell startup script immediately after GOPATH is set.
+  - In addition, add the workspace bin directory, "$GOPATH/bin", to the PATH. This should appear in the shell startup script immediately after GOPATH is set.
 - Install Git: [Setup Git](https://help.github.com/articles/set-up-git/)
 - Download Go packages:  
   - go get gopkg.in/gcfg.v1
