@@ -157,7 +157,7 @@ func consumeHttpRequests(config *config.ConfigParameters, flags *Flags, logFile 
 				}
 
 				// Start goroutine to process http request
-				go msg.HttpPost(ackCh, config.Http.Timeout)
+				go msg.HttpRequest(ackCh, config.Http.DefaultMethod, config.Http.Timeout)
 			}
 
 		// Log result of http request and acknowledge RabbitMQ message

@@ -16,10 +16,13 @@ STDERR_LOG=stderr.log
 ERROR_LOG=error.log
 RESET_ERROR_LOG=reset_error.log
 
-HTTP_200=http://apps.testinsane.com/rte/status/200/6
-HTTP_404=http://apps.testinsane.com/rte/status/404/0
-HTTP_500=http://apps.testinsane.com/rte/status/500/0
-HTTP_DELAY_20=http://apps.testinsane.com/rte/status/200/20
+HTTP_200=http://apps.testinsane.com/rte/status/200/6            # 200 response code with 6 second delay
+HTTP_404=http://apps.testinsane.com/rte/status/404/0            # 404 response code
+HTTP_500=http://apps.testinsane.com/rte/status/500/0            # 500 response code
+HTTP_DELAY_20=http://apps.testinsane.com/rte/status/200/20      # 200 response code with 20 second delay
+HTTP_GET=http://httpbin.org/get                                 # Only GET method is accepted
+HTTP_POST=http://httpbin.org/post                               # Only POST method is accepted
+HTTP_PUT=http://httpbin.org/put                                 # Only PUT method is accepted
 
 RED="\e[91m"
 GREEN="\e[92m"

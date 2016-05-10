@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/LinioIT/rabbitmq-worker/config"
 	"github.com/LinioIT/rabbitmq-worker/logfile"
 	"github.com/streadway/amqp"
 	"io/ioutil"
@@ -26,6 +27,7 @@ type HttpRequestMessage struct {
 	MessageId string
 
 	// Http request fields
+	Method  string
 	Url     string
 	Headers map[string]string
 	Body    string
@@ -53,6 +55,7 @@ type HttpRequestMessage struct {
 
 func (msg *HttpRequestMessage) Parse(rmqDelivery amqp.Delivery, logFile *logfile.Logger) (err error) {
 	type MessageFields struct {
+		Method  string
 		Url     string
 		Headers []map[string]string
 		Body    string
@@ -72,6 +75,8 @@ func (msg *HttpRequestMessage) Parse(rmqDelivery amqp.Delivery, logFile *logfile
 	if msg.Timestamp > 0 {
 		msg.MessageId += fmt.Sprintf("-%d", msg.Timestamp)
 	}
+
+	var ok bool
 
 	/*** Extract fields from RabbitMQ message headers ***/
 	rmqHeaders := rmqDelivery.Headers
@@ -106,6 +111,15 @@ func (msg *HttpRequestMessage) Parse(rmqDelivery amqp.Delivery, logFile *logfile
 		return err
 	}
 
+	// Method
+	if len(fields.Method) > 0 {
+		fields.Method, ok = config.CheckMethod(fields.Method)
+		if !ok {
+			return errors.New("The value in field 'method' is not a recognized http method")
+		}
+		msg.Method = fields.Method
+	}
+
 	// Url
 	if len(fields.Url) == 0 {
 		return errors.New("Field 'url' is empty or missing")
@@ -123,6 +137,9 @@ func (msg *HttpRequestMessage) Parse(rmqDelivery amqp.Delivery, logFile *logfile
 	// Request body
 	msg.Body = fields.Body
 
+	if len(msg.Method) > 0 {
+		logFile.WriteDebug("Message ID", msg.MessageId, "- Method:", msg.Method)
+	}
 	logFile.WriteDebug("Message ID", msg.MessageId, "- Url:", msg.Url)
 	logFile.WriteDebug("Message ID", msg.MessageId, "- Headers:", msg.Headers)
 	logFile.WriteDebug("Message ID", msg.MessageId, "- Body:", msg.Body)
@@ -168,8 +185,15 @@ func getRetryInfo(rmqHeaders amqp.Table) (retryCnt int, firstRejectionTime int64
 	return
 }
 
-func (msg *HttpRequestMessage) HttpPost(ackCh chan HttpRequestMessage, timeout int) {
-	req, err := http.NewRequest("POST", msg.Url, bytes.NewBufferString(msg.Body))
+func (msg *HttpRequestMessage) HttpRequest(ackCh chan HttpRequestMessage, defaultMethod string, timeout int) {
+	var method string
+	if len(msg.Method) > 0 {
+		method = msg.Method
+	} else {
+		method = defaultMethod
+	}
+
+	req, err := http.NewRequest(method, msg.Url, bytes.NewBufferString(msg.Body))
 	if err != nil {
 		msg.HttpErr = err
 		msg.HttpStatusMsg = "Invalid http request: " + err.Error()
