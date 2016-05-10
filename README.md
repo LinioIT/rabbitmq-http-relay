@@ -1,6 +1,6 @@
 RabbitMQ Worker for Reliable HTTP Dispatch
 ==========================================
-RabbitMQ consumer, written in Go, which reliably sends POST requests to an http server.
+RabbitMQ consumer, written in Go, which reliably sends requests to an http server.
 
 Features include:
 - A "wait" queue for holding and retrying failed requests
@@ -29,6 +29,7 @@ These steps have been tested with Ubuntu 14.04, but should work for any Linux di
 - Add the RabbitMQ user, "rmq", and assign permissions:  
 `sudo rabbitmqctl add_user rmq rmq`  
 `sudo rabbitmqctl set_permissions rmq '.*' '.*' '.*'`
+`sudo rabbitmqctl set_user_tags rmq administrator`
 - Download and install Go: [Downloads - The Go Programming Language](https://golang.org/dl/)  
   Follow instructions to:
   - Add the Go bin directory to the PATH environment variable
