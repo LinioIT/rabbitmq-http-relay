@@ -12,6 +12,7 @@
 [Message]
   DefaultTTL = 60
 [Http]
+  DefaultMethod = POST
   Timeout = 30
 [Log]
   LogFile = "rabbitmq-worker.log"

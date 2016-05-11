@@ -1,11 +1,11 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"github.com/streadway/amqp"
 	"log"
 	"os"
-	"strconv"
 	"time"
 )
 
@@ -27,26 +27,53 @@ func main() {
 	failOnError(err, "Failed to open a channel")
 	defer ch.Close()
 
-	headers := make(amqp.Table)
-
+	// Get command line flags
 	var url string
-	if len(os.Args) > 1 {
-		url = os.Args[1]
-	} else {
-		url = "http://httpbin.org/post"
+	var method string
+	var headers string
+	var body string
+	var id string
+	var ttl int64
+
+	flag.StringVar(&url, "url", "", "http url")
+	flag.StringVar(&method, "method", "", "http request method")
+	flag.StringVar(&headers, "headers", `[{"Content-Type": "application/json"}, {"Accept-Charset": "utf-8"}]`, "http request headers")
+	flag.StringVar(&body, "body", `{\"key\": \"1230789\"}`, "http request body")
+	flag.StringVar(&id, "id", "", "message id")
+	flag.Int64Var(&ttl, "ttl", 0, "message ttl")
+
+	flag.Usage = usage
+	flag.Parse()
+
+	if len(url) == 0 {
+		usage()
 	}
 
-	body := `{"url": "` + url + `", "headers": [{"Content-Type": "application/json"}, {"Accept-Charset": "utf-8"}], "body": "{\"key\": \"1230789\"}"}`
+	messageBody := `{"url": "` + url + `"`
+	if len(method) > 0 {
+		messageBody += `, "method": "`
+		messageBody += method
+		messageBody += `"`
+	}
+	if len(headers) > 0 {
+		messageBody += `, "headers": `
+		messageBody += headers
+	}
+	if len(body) > 0 {
+		messageBody += `, "body": "`
+		messageBody += body
+		messageBody += `"`
+	}
+	messageBody += `}`
 
-	if len(os.Args) > 2 {
-		headers["message_id"] = os.Args[2]
+	messageHeaders := make(amqp.Table)
+
+	if len(id) > 0 {
+		messageHeaders["message_id"] = id
 	}
 
-	if len(os.Args) > 3 {
-		msg_ttl, err := strconv.ParseInt(os.Args[3], 10, 64)
-		if err == nil {
-			headers["expiration"] = int64(time.Now().Unix()) + msg_ttl
-		}
+	if ttl > 0 {
+		messageHeaders["expiration"] = int64(time.Now().Unix()) + ttl
 	}
 
 	err = ch.Publish(
@@ -55,11 +82,36 @@ func main() {
 		false,      // mandatory
 		false,      // immediate
 		amqp.Publishing{
-			Headers:      headers,
+			Headers:      messageHeaders,
 			ContentType:  "application/json",
 			DeliveryMode: uint8(persistentDeliveryMode),
-			Body:         []byte(body),
+			Body:         []byte(messageBody),
 		})
-	log.Println("Published the http request message")
-	failOnError(err, "Failed to publish the http request message")
+	failOnError(err, "Failed to publish the http request message!")
+
+	fmt.Println("Published the http request message...")
+	fmt.Println("Message Body:", messageBody)
+	if len(id) > 0 {
+		fmt.Println("Message ID:", id)
+	}
+	if ttl > 0 {
+		fmt.Println("Message TTL:", ttl)
+	}
+	fmt.Println("")
+}
+
+func usage() {
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Usage:", os.Args[0], "--url=URL [OPTION]")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "  --url            HTTP request URL. Required.")
+	fmt.Fprintln(os.Stderr, "  --method         HTTP request method. If not provided, the default method will be used.")
+	fmt.Fprintln(os.Stderr, "  --headers        HTTP request headers - JSON encoded array. Defaults to sample headers.")
+	fmt.Fprintln(os.Stderr, "  --body           HTTP request body. Defaults to a sample JSON body. Double-quotes in JSON must be escaped.")
+	fmt.Fprintln(os.Stderr, "  --id             Message ID. If not provided, an id will be generated.")
+	fmt.Fprintln(os.Stderr, "  --ttl            Message TTL. If not provided, the default expiration will be used.")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:", os.Args[0], `--url=http://httpbin.org/post --method=POST --headers='[{"Content-Type": "application/json"}]' --body='{\"key\": \"1230789\"}' --id=MSGID00002 --ttl=55`)
+	fmt.Fprintln(os.Stderr)
+	os.Exit(1)
 }

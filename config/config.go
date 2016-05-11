@@ -93,6 +93,7 @@ func (config *ConfigParameters) String() string {
 	cfgDtls += "[Message]\n"
 	cfgDtls += "  DefaultTTL = " + strconv.Itoa(config.Message.DefaultTTL) + "\n"
 	cfgDtls += "[Http]\n"
+	cfgDtls += "  DefaultMethod = " + config.Http.DefaultMethod + "\n"
 	cfgDtls += "  Timeout = " + strconv.Itoa(config.Http.Timeout) + "\n"
 	cfgDtls += "[Log]\n"
 	cfgDtls += "  LogFile = \"" + config.Log.LogFile + "\""

@@ -200,7 +200,7 @@ Signal QUIT
 StartTest "200 Response"
 $WORKER $CONFIG 2> $STDERR_LOG &
 sleep 1
-$NEW_REQUEST $HTTP_200 MSGID0001 > /dev/null 2>&1
+$NEW_REQUEST --url=$HTTP_200 --id=MSGID0001 > /dev/null 2>&1
 sleep 10
 CheckResults
 Signal QUIT
@@ -208,7 +208,7 @@ Signal QUIT
 StartTest "404 Response"
 $WORKER $CONFIG 2> $STDERR_LOG &
 sleep 1
-$NEW_REQUEST $HTTP_404 MSGID0001 > /dev/null 2>&1
+$NEW_REQUEST --url=$HTTP_404 --id=MSGID0001 > /dev/null 2>&1
 sleep 5
 CheckResults
 Signal QUIT
@@ -216,7 +216,7 @@ Signal QUIT
 StartTest "500 Response With Retries"
 $WORKER $CONFIG 2> $STDERR_LOG &
 sleep 1
-$NEW_REQUEST $HTTP_500 MSGID0001 25 > /dev/null 2>&1
+$NEW_REQUEST --url=$HTTP_500 --id=MSGID0001 --ttl=25 > /dev/null 2>&1
 sleep 27
 CheckResults
 Signal QUIT
@@ -226,7 +226,7 @@ sed 's/^Timeout = 30/Timeout = 15/' $CONFIG > config.tmp
 mv config.tmp $CONFIG
 $WORKER $CONFIG 2> $STDERR_LOG &
 sleep 1
-$NEW_REQUEST $HTTP_DELAY_20 MSGID0001 20 > /dev/null 2>&1
+$NEW_REQUEST --url=$HTTP_DELAY_20 --id=MSGID0001 --ttl=20 > /dev/null 2>&1
 sleep 20
 CheckResults
 Signal QUIT
@@ -234,11 +234,11 @@ Signal QUIT
 StartTest "Shutdown With Active Requests"
 $WORKER $CONFIG 2> $STDERR_LOG &
 sleep 1
-$NEW_REQUEST $HTTP_200 MSGID0001 > /dev/null 2>&1
+$NEW_REQUEST --url=$HTTP_200 --id=MSGID0001 > /dev/null 2>&1
 sleep 1
-$NEW_REQUEST $HTTP_200 MSGID0002 > /dev/null 2>&1
+$NEW_REQUEST --url=$HTTP_200 --id=MSGID0002 > /dev/null 2>&1
 sleep 1
-$NEW_REQUEST $HTTP_200 MSGID0003 > /dev/null 2>&1
+$NEW_REQUEST --url=$HTTP_200 --id=MSGID0003 > /dev/null 2>&1
 Signal QUIT
 sleep 10
 CheckResults
@@ -248,7 +248,7 @@ sed 's/^DefaultTTL = 60/DefaultTTL = 15/' $CONFIG > config.tmp
 mv config.tmp $CONFIG
 $WORKER $CONFIG 2> $STDERR_LOG &
 sleep 1
-$NEW_REQUEST $HTTP_500 MSGID0001 > /dev/null 2>&1
+$NEW_REQUEST --url=$HTTP_500 --id=MSGID0001 > /dev/null 2>&1
 sleep 17
 CheckResults
 Signal QUIT
@@ -256,14 +256,48 @@ Signal QUIT
 StartTest "Prefetch Count"
 $WORKER $CONFIG 2> $STDERR_LOG &
 sleep 1
-$NEW_REQUEST $HTTP_200 MSGID0001 > /dev/null 2>&1
+$NEW_REQUEST --url=$HTTP_200 --id=MSGID0001 > /dev/null 2>&1
 sleep 1
-$NEW_REQUEST $HTTP_200 MSGID0002 > /dev/null 2>&1
+$NEW_REQUEST --url=$HTTP_200 --id=MSGID0002 > /dev/null 2>&1
 sleep 1
-$NEW_REQUEST $HTTP_200 MSGID0003 > /dev/null 2>&1
+$NEW_REQUEST --url=$HTTP_200 --id=MSGID0003 > /dev/null 2>&1
 sleep 1
-$NEW_REQUEST $HTTP_200 MSGID0004 > /dev/null 2>&1
+$NEW_REQUEST --url=$HTTP_200 --id=MSGID0004 > /dev/null 2>&1
 sleep 12
+CheckResults
+Signal QUIT
+
+StartTest "Get Request"
+$WORKER $CONFIG 2> $STDERR_LOG &
+sleep 1
+$NEW_REQUEST --url=$HTTP_GET --method=GET --body="" --id=MSGID0001 > /dev/null 2>&1
+sleep 10
+CheckResults
+Signal QUIT
+
+StartTest "Put Request"
+$WORKER $CONFIG 2> $STDERR_LOG &
+sleep 1
+$NEW_REQUEST --url=$HTTP_PUT --method=PUT --id=MSGID0001 > /dev/null 2>&1
+sleep 10
+CheckResults
+Signal QUIT
+
+StartTest "Default Get Request"
+sed 's/POST/GET/' $CONFIG > config.tmp
+mv config.tmp $CONFIG
+$WORKER $CONFIG 2> $STDERR_LOG &
+sleep 1
+$NEW_REQUEST --url=$HTTP_GET --body="" --id=MSGID0001 > /dev/null 2>&1
+sleep 10
+CheckResults
+Signal QUIT
+
+StartTest "Wrong Method"
+$WORKER $CONFIG 2> $STDERR_LOG &
+sleep 1
+$NEW_REQUEST --url=$HTTP_GET --id=MSGID0001 > /dev/null 2>&1
+sleep 10
 CheckResults
 Signal QUIT
 

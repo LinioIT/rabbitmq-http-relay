@@ -51,13 +51,13 @@ Testing
 -------
 The included test suite exercises the worker. The log and standard error outputs are verified against the expected results.
 An external website is used to produce specific http responses and delays (see test script rw-test for details).
-Currently, the tests take about 2 minutes to complete. Run the following commands to execute the tests:  
+Currently, the tests take about 3 minutes to complete. Run the following commands to execute the tests:  
 `cd $GOPATH/src/github.com/LinioIT/rabbitmq-worker/test`  
 `./rw-test`
 
 Sample successful test run:
 ```
-Starting tests - Mon May  9 16:53:43 UTC 2016
+Starting tests - Wed May 11 22:48:57 UTC 2016
 
 Test 1 - Create Queues...                    PASSED
 Test 2 - Startup...                          PASSED
@@ -76,10 +76,13 @@ Test 14 - Http Timeout...                    PASSED
 Test 15 - Shutdown With Active Requests...   PASSED
 Test 16 - Default TTL...                     PASSED
 Test 17 - Prefetch Count...                  PASSED
+Test 18 - Get Request...                     PASSED
+Test 19 - Put Request...                     PASSED
+Test 20 - Default Get Request...             PASSED
+Test 21 - Wrong Method...                    PASSED
 
-# of passed tests: 17
+# of passed tests: 21
 # of failed tests: 0
 
-Tests completed - Mon May  9 16:55:50 UTC 2016
+Tests completed - Wed May 11 22:51:47 UTC 2016
 ```
-
