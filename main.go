@@ -30,6 +30,7 @@ var signals chan os.Signal
 
 func main() {
 	var logFile logfile.Logger
+	var errFile logfile.Logger
 
 	signals = make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGUSR1)
@@ -55,12 +56,19 @@ func main() {
 			break
 		}
 
+		err = errFile.Open(config.Log.ErrFile, false)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Could not open the error file:", config.Log.ErrFile, "-", err)
+			break
+		}
+
 		logFile.Write("Configuration file loaded")
 		logFile.WriteDebug("Config settings:\n" + config.String())
 
 		logFile.Write("Creating/Verifying RabbitMQ queues...")
 		if err := rabbitmq.QueueCheck(&config); err != nil {
 			logFile.Write("Error detected while creating/verifying queues:", err)
+			errFile.Write("Error detected while creating/verifying queues:", err)
 			flags.connectionBroken = true
 		} else {
 			logFile.Write("Queues are ready")
@@ -74,12 +82,13 @@ func main() {
 		// Queue verification must pass on the first attempt after starting or after a graceful restart.
 		if flags.cleanStart && flags.connectionBroken {
 			logFile.Write("Initial RabbitMQ queue verification failed, exiting program.")
+			errFile.Write("Initial RabbitMQ queue verification failed, exiting program.")
 			break
 		}
 
 		// Process RabbitMQ messages
 		if !flags.connectionBroken {
-			consumeHttpRequests(&config, &flags, &logFile)
+			consumeHttpRequests(&config, &flags, &logFile, &errFile)
 		}
 
 		if checkShutdown(&flags, signals, &logFile, config.Connection.RetryDelay) {
@@ -87,9 +96,11 @@ func main() {
 		}
 
 		logFile.Close()
+		errFile.Close()
 	}
 
 	logFile.Close()
+	errFile.Close()
 }
 
 func getArgs() (configFile string, flags Flags) {
@@ -117,7 +128,7 @@ func usage() {
 	os.Exit(1)
 }
 
-func consumeHttpRequests(config *config.ConfigParameters, flags *Flags, logFile *logfile.Logger) {
+func consumeHttpRequests(config *config.ConfigParameters, flags *Flags, logFile *logfile.Logger, errFile *logfile.Logger) {
 	var msg message.HttpRequestMessage
 	var rmqConn rabbitmq.RMQConnection
 

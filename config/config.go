@@ -27,6 +27,7 @@ type ConfigParameters struct {
 	}
 	Log struct {
 		LogFile string
+		ErrFile string
 	}
 }
 
@@ -78,6 +79,10 @@ func (config *ConfigParameters) ParseConfigFile(configFile string) error {
 		return errors.New("LogFile path is empty or missing")
 	}
 
+	if len(config.Log.ErrFile) == 0 {
+		return errors.New("ErrFile path is empty or missing")
+	}
+
 	return nil
 }
 
@@ -97,6 +102,7 @@ func (config *ConfigParameters) String() string {
 	cfgDtls += "  Timeout = " + strconv.Itoa(config.Http.Timeout) + "\n"
 	cfgDtls += "[Log]\n"
 	cfgDtls += "  LogFile = \"" + config.Log.LogFile + "\""
+	cfgDtls += "  ErrFile = \"" + config.Log.ErrFile + "\""
 
 	return cfgDtls
 }
