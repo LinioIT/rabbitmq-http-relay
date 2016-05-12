@@ -11,5 +11,5 @@
 2016-05-06T02:31:06Z - Consumer registered successfully
 2016-05-06T02:31:06Z - Started 'closed channel' listener
 2016-05-06T02:31:07Z - Message ID MSGID0001 - Parsed successfully
-2016-05-06T02:31:07Z - Message ID MSGID0001 - Http request error: 4XX status on http POST (no retry): 404 Not Found
+2016-05-06T02:31:07Z - Message ID MSGID0001 - Http request error: 4XX status on http request (no retry): 404 Not Found
 2016-05-06T02:31:07Z - Message ID MSGID0001 - Dropping

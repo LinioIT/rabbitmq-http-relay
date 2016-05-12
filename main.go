@@ -137,6 +137,7 @@ func consumeHttpRequests(config *config.ConfigParameters, flags *Flags, logFile 
 	defer rmqConn.Close()
 	if err != nil {
 		logFile.Write(err)
+		errFile.Write(err)
 		flags.connectionBroken = true
 		return
 	}
@@ -158,6 +159,7 @@ func consumeHttpRequests(config *config.ConfigParameters, flags *Flags, logFile 
 			err = msg.Parse(delivery, logFile)
 			if err != nil {
 				logFile.Write("Message ID", msg.MessageId, "- Parse failed:", err)
+				errFile.Write("Message ID", msg.MessageId, "- Parse failed:", err)
 				msg.Drop = true
 				ackCh <- msg
 			} else {
@@ -176,20 +178,26 @@ func consumeHttpRequests(config *config.ConfigParameters, flags *Flags, logFile 
 		case msg = <-ackCh:
 			if msg.HttpErr != nil {
 				logFile.Write("Message ID", msg.MessageId, "- Http request error:", msg.HttpErr.Error())
+				errFile.Write("Message ID", msg.MessageId, "- Http request error:", msg.HttpErr.Error())
 			} else {
 				if len(msg.HttpStatusMsg) > 0 {
 					logFile.Write("Message ID", msg.MessageId, "- Http request success:", msg.HttpStatusMsg)
 					logFile.WriteDebug("Message ID", msg.MessageId, "- Response Body:", msg.HttpRespBody)
 				} else {
 					logFile.Write("Message ID", msg.MessageId, "- Http request was aborted or not attempted")
+					errFile.Write("Message ID", msg.MessageId, "- Http request was aborted or not attempted")
 				}
 			}
 
 			msg.CheckExpiration(config.Queue.WaitDelay, config.Message.DefaultTTL)
+			if msg.Expired {
+				errFile.Write("Message ID", msg.MessageId, "- EXPIRED")
+			}
 
 			// Acknowledge RabbitMQ message to trigger drop or retry
 			if err = rabbitmq.Acknowledge(msg, logFile); err != nil {
 				logFile.Write("Message ID", msg.MessageId, "- RabbitMQ acknowledgment failed:", err)
+				errFile.Write("Message ID", msg.MessageId, "- RabbitMQ acknowledgment failed:", err)
 				return
 			}
 			logFile.WriteDebug("Message ID", msg.MessageId, "- RabbitMQ acknowledgment successful")
@@ -233,20 +241,34 @@ func consumeHttpRequests(config *config.ConfigParameters, flags *Flags, logFile 
 				}
 
 			case "user defined signal 1":
-				logFile.Write("Log reopen requested")
+				logFile.Write("Reopen of log files requested")
 				if err := logFile.Reopen(); err != nil {
-					logFile.Write("Error encountered during log reopen -", err)
+					errFile.Write("Error encountered during log file reopen -", err)
 				} else {
-					logFile.Write("Log reopen completed")
+					logFile.Write("Log file reopen completed")
+				}
+				if err := errFile.Reopen(); err != nil {
+					fmt.Fprintln(os.Stderr, "Error encountered during error file reopen -", err)
+				} else {
+					logFile.Write("Error file reopen completed")
 				}
 			}
 		}
 
-		if logFile.HasFatalError() && !flags.gracefulShutdown {
-			fmt.Fprintln(os.Stderr, "Fatal log error detected. Starting graceful shutdown...")
-			flags.gracefulShutdown = true
-			if unacknowledgedMsgs == 0 {
-				break
+		// Shutdown if an error has been detected when writing to the log files
+		if !flags.gracefulShutdown {
+			if logFile.HasFatalError() {
+				fmt.Fprintln(os.Stderr, "Fatal problem with log file detected. Starting graceful shutdown...")
+				flags.gracefulShutdown = true
+				if unacknowledgedMsgs == 0 {
+					break
+				}
+			} else if errFile.HasFatalError() {
+				fmt.Fprintln(os.Stderr, "Fatal problem with error file detected. Starting graceful shutdown...")
+				flags.gracefulShutdown = true
+				if unacknowledgedMsgs == 0 {
+					break
+				}
 			}
 		}
 	}

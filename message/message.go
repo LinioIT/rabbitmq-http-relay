@@ -212,7 +212,7 @@ func (msg *HttpRequestMessage) HttpRequest(ackCh chan HttpRequestMessage, defaul
 
 	if err != nil {
 		msg.HttpErr = err
-		msg.HttpStatusMsg = "Error on http POST: " + err.Error()
+		msg.HttpStatusMsg = "Error on http request: " + err.Error()
 		ackCh <- *msg
 		return
 	} else {
@@ -221,7 +221,7 @@ func (msg *HttpRequestMessage) HttpRequest(ackCh chan HttpRequestMessage, defaul
 		// The response body is not currently used to evaluate success of the http request. Therefore, an error here is not fatal.
 		// This will change if functionality is added to evaluate the response body.
 		if err != nil {
-			msg.HttpRespBody = "Error encountered when reading POST response body"
+			msg.HttpRespBody = "Error encountered when reading response body"
 		} else {
 			msg.HttpStatusMsg = resp.Status
 			msg.HttpRespBody = string(htmlData)
@@ -230,7 +230,7 @@ func (msg *HttpRequestMessage) HttpRequest(ackCh chan HttpRequestMessage, defaul
 	}
 
 	if resp.StatusCode >= 400 && resp.StatusCode <= 499 {
-		msg.HttpErr = errors.New("4XX status on http POST (no retry): " + resp.Status)
+		msg.HttpErr = errors.New("4XX status on http request (no retry): " + resp.Status)
 		msg.Drop = true
 		ackCh <- *msg
 		return
@@ -242,7 +242,7 @@ func (msg *HttpRequestMessage) HttpRequest(ackCh chan HttpRequestMessage, defaul
 		return
 	}
 
-	msg.HttpErr = errors.New("Error on http POST: " + resp.Status)
+	msg.HttpErr = errors.New("Error on http request: " + resp.Status)
 	ackCh <- *msg
 }
 

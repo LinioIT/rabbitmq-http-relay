@@ -101,7 +101,7 @@ func (config *ConfigParameters) String() string {
 	cfgDtls += "  DefaultMethod = " + config.Http.DefaultMethod + "\n"
 	cfgDtls += "  Timeout = " + strconv.Itoa(config.Http.Timeout) + "\n"
 	cfgDtls += "[Log]\n"
-	cfgDtls += "  LogFile = \"" + config.Log.LogFile + "\""
+	cfgDtls += "  LogFile = \"" + config.Log.LogFile + "\"\n"
 	cfgDtls += "  ErrFile = \"" + config.Log.ErrFile + "\""
 
 	return cfgDtls

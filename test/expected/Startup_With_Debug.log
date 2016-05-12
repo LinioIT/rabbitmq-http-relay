@@ -16,6 +16,7 @@
   Timeout = 30
 [Log]
   LogFile = "rabbitmq-worker.log"
+  ErrFile = "rabbitmq-worker.err"
 2016-05-05T17:18:23Z - Creating/Verifying RabbitMQ queues...
 2016-05-05T17:18:23Z - Queues are ready
 2016-05-05T17:18:23Z - Connecting to RabbitMQ...

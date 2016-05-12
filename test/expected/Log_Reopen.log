@@ -12,7 +12,8 @@
 2016-05-05T22:24:40Z - Registering a consumer...
 2016-05-05T22:24:40Z - Consumer registered successfully
 2016-05-05T22:24:40Z - Started 'closed channel' listener
-2016-05-05T22:24:49Z - Log reopen requested
+2016-05-05T22:24:49Z - Reopen of log files requested
 ============================================================
 
-2016-05-05T22:24:49Z - Log reopen completed
+2016-05-05T22:24:49Z - Log file reopen completed
+2016-05-05T22:24:49Z - Error file reopen completed
