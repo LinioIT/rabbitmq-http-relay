@@ -2,15 +2,20 @@ RabbitMQ Worker for Reliable HTTP Dispatch
 ==========================================
 RabbitMQ consumer, written in Go, which reliably sends requests to an http server.
 
+Usage:
+Clients insert messages containing http requests into a RabbitMQ "main" queue. The Go consumer parses these messages and attempts the request.  Failed requests are placed on a "wait" queue until a configured delay period has expired. They are then moved back to the main queue for retry. Messages are retried until: the http request is successful, the message expiration time has been reached, or a permanent error has been encountered (e.g. message parsing error, 4XX http response code).
+
 Features include:
-- A "wait" queue for holding and retrying failed requests
+- Concurrent execution of http requests in their own goroutines
 - Monitoring of http response codes to determine message completion status:  
-  2XX = success, 4XX = no retry. Any other response code or http error = retry
-- Message expiration can be specified per-message, or else defaults to the configuration TTL
-- All message activity is logged. A command line 'debug' option can be used to get detailed internal activity
-- Accepts os signals to initiate admin operations: graceful shutdown, graceful restart, and log reopen (for log rotation)
-- Http requests are executed in their own goroutines to enhance performance
-- Automatically detects when the RabbitMQ connection is broken and reconnects (after a graceful restart)
+  2XX = Success, 4XX = No Retry. Any other response code or http error = Retry
+- Message expiration can be specified per-message, or else defaults to the configured TTL
+- Accepts OS signals to initiate admin operations: QUIT = graceful shutdown, HUP = graceful restart, and USR1 = log reopen (for log rotation)
+- Automatically detects if the RabbitMQ connection is broken and attempts to reconnect after a delay and graceful restart
+- All message activity is logged
+  A command line 'debug' option can be used to show detailed internal activity  
+  Logged messages include an id. The id is either provided by the client or generated from the message body and initial timestamp (if available)  
+  Errors are also logged to a distinct error file for monitoring purposes
 
 See the configuration file comments and the command-line description below for more details.
 
