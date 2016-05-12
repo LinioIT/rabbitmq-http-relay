@@ -28,7 +28,7 @@ These steps have been tested with Ubuntu 14.04, but should work for any Linux di
   *NOTE: The Timestamp plugin is not mandatory, but recommended since it is used to create a unique message id if one is not provided.*
 - Add the RabbitMQ user, "rmq", and assign permissions:  
 `sudo rabbitmqctl add_user rmq rmq`  
-`sudo rabbitmqctl set_permissions rmq '.*' '.*' '.*'`
+`sudo rabbitmqctl set_permissions rmq '.*' '.*' '.*'`  
 `sudo rabbitmqctl set_user_tags rmq administrator`
 - Download and install Go: [Downloads - The Go Programming Language](https://golang.org/dl/)  
   Follow instructions to:
