@@ -2,8 +2,8 @@ RabbitMQ Worker for Reliable HTTP Dispatch
 ==========================================
 RabbitMQ consumer, written in Go, which reliably sends requests to an http server.
 
-**Usage:**  
-Clients insert messages containing http requests into a RabbitMQ "main" queue. The Go consumer parses these messages and attempts the request.  Failed requests are placed on a "wait" queue until a configured delay period has expired. They are then moved back to the main queue for retry. Messages are retried until: the http request is successful, the message expiration time has been reached, or a permanent error has been encountered (e.g. message parsing error, 4XX http response code).
+**Description:**  
+In order to reliably send an http request, a client inserts a message containing the request into a RabbitMQ queue. The Go consumer parses messages from this main queue and then attempts the request.  Failed requests are placed on a wait queue, where they stay until a configured delay period has expired. They are then moved back to the main queue for retry. Messages are retried until: the http request is successful, the message expiration time has been reached, or a permanent error has been encountered (e.g. message parsing error, 4XX http response code).
 
 **Features include:**
 - Concurrent execution of http requests in their own goroutines
@@ -56,7 +56,7 @@ These steps have been tested with Ubuntu 14.04, but should work for any Linux di
 
 Testing
 -------
-The included test suite exercises the worker. The log file, error file, and standard error outputs are verified against the expected results.
+The included test suite exercises the worker. The log file, error file, and standard error outputs are verified against expected results.
 A local http server is used to produce specific http responses and delays (see webserver/main.go and test/rw-test for details).
 Currently, the tests take about 3 minutes to complete. Run the following commands to execute the tests:  
 `cd $GOPATH/src/github.com/LinioIT/rabbitmq-worker/test`  
