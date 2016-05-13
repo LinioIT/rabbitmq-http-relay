@@ -10,6 +10,8 @@ CONFIG=rabbitmq-worker.conf
 CONFIG_TEST=rabbitmq-worker.conf_test
 
 NEW_REQUEST=insertHttpRequest
+TEST_WEBSERVER=webserver
+PORT=8000
 
 LOG_OUTPUT=rabbitmq-worker.log
 ERR_OUTPUT=rabbitmq-worker.err
@@ -18,13 +20,14 @@ STDERR_OUTPUT=stderr.log
 ERROR_LOG=error.log
 RESET_ERROR_LOG=reset_error.log
 
-HTTP_200=http://apps.testinsane.com/rte/status/200/6            # 200 response code with 6 second delay
-HTTP_404=http://apps.testinsane.com/rte/status/404/0            # 404 response code
-HTTP_500=http://apps.testinsane.com/rte/status/500/0            # 500 response code
-HTTP_DELAY_20=http://apps.testinsane.com/rte/status/200/20      # 200 response code with 20 second delay
-HTTP_GET=http://httpbin.org/get                                 # Only GET method is accepted
-HTTP_POST=http://httpbin.org/post                               # Only POST method is accepted
-HTTP_PUT=http://httpbin.org/put                                 # Only PUT method is accepted
+HTTP_200=http://localhost:$PORT/post/200/6           # 200 response code with 6 second delay
+HTTP_404=http://localhost:$PORT/post/404/0           # 404 response code
+HTTP_500=http://localhost:$PORT/post/500/0           # 500 response code
+HTTP_DELAY_20=http://localhost:$PORT/post/200/20     # 200 response code with 20 second delay
+HTTP_GET=http://localhost:$PORT/get/200/0            # Only GET method is accepted
+HTTP_POST=http://localhost:$PORT/post/200/0          # Only POST method is accepted
+HTTP_PUT=http://localhost:$PORT/put/200/0            # Only PUT method is accepted
+HTTP_STOP=http://localhost:$PORT/stop
 
 RED="\e[91m"
 GREEN="\e[92m"
@@ -44,9 +47,14 @@ function Reset {
     fi
 }
 
+function Init {
+	$TEST_WEBSERVER $PORT > /dev/null 2>&1 &
+}
+
 function Cleanup {
     rm -f $CONFIG $LOG_OUTPUT $ERR_OUTPUT $STDERR_OUTPUT > /dev/null 2>&1
     deleteQueue $CONFIG > /dev/null 2>&1
+	wget -O /dev/null > /dev/null 2>&1 $HTTP_STOP
 }
 
 function StartTest {
@@ -58,6 +66,12 @@ function StartTest {
 
 function DiffPrep {
     sed 's/^[0-9\-]\{10\}T[0-9:]\{8\}\([+-][0-9:]\{5\}\|Z\) - /<<DATE>> - /' $1 | grep -v '^\s*$' | grep -v "^==*$" > $2
+
+    if    [[ (x$3 != x)  &&  (x$4 != x) ]]
+    then  ESCAPED_STR=$(echo $4 | sed 's/\//\\\//g')
+          sed "s/$ESCAPED_STR/<<$3>>/g" $2 > $2.tmp
+          mv $2.tmp $2
+    fi
 }
 
 function LogDumpHeader {
@@ -89,8 +103,8 @@ function CheckResults {
     let ERROR_COUNT=0
 
     # Compare the actual and expected log output
-    DiffPrep $EXPECTED_LOG expected_log.tmp
-    DiffPrep $LOG_OUTPUT actual_log.tmp
+    DiffPrep $EXPECTED_LOG expected_log.tmp $1 $2
+    DiffPrep $LOG_OUTPUT actual_log.tmp $1 $2
     DIFF=$(diff -q expected_log.tmp actual_log.tmp 2>&1)
     if    [[ x${DIFF}x != xx ]]
     then  let ERROR_COUNT=$ERROR_COUNT+1
@@ -103,8 +117,8 @@ function CheckResults {
     if    [[ -s $ERR_OUTPUT  ||  -s $EXPECTED_ERR ]]
     then  touch $ERR_OUTPUT
           touch $EXPECTED_ERR
-          DiffPrep $EXPECTED_ERR expected_err.tmp
-          DiffPrep $ERR_OUTPUT actual_err.tmp
+          DiffPrep $EXPECTED_ERR expected_err.tmp $1 $2
+          DiffPrep $ERR_OUTPUT actual_err.tmp $1 $2
           DIFF=$(diff -q expected_err.tmp actual_err.tmp 2>&1)
           if    [[ x${DIFF}x != xx ]]
           then  let ERROR_COUNT=$ERROR_COUNT+1
@@ -158,6 +172,8 @@ echo
 #################
 #   T E S T S   #
 #################
+
+Init
 
 StartTest "Create Queues"
 $WORKER --queues-only $CONFIG 2> $STDERR_OUTPUT
@@ -216,6 +232,7 @@ Signal USR1
 sleep 3
 CheckResults
 Signal QUIT
+sleep 5
 
 StartTest "200 Response"
 $WORKER $CONFIG 2> $STDERR_OUTPUT &
@@ -248,7 +265,7 @@ $WORKER $CONFIG 2> $STDERR_OUTPUT &
 sleep 1
 $NEW_REQUEST --url=$HTTP_DELAY_20 --id=MSGID0001 --ttl=20 > /dev/null 2>&1
 sleep 20
-CheckResults
+CheckResults URL $HTTP_DELAY_20
 Signal QUIT
 
 StartTest "Shutdown With Active Requests"
@@ -256,9 +273,9 @@ $WORKER $CONFIG 2> $STDERR_OUTPUT &
 sleep 1
 $NEW_REQUEST --url=$HTTP_200 --id=MSGID0001 > /dev/null 2>&1
 sleep 1
-$NEW_REQUEST --url=$HTTP_200 --id=MSGID0001 > /dev/null 2>&1
+$NEW_REQUEST --url=$HTTP_200 --id=MSGID0002 > /dev/null 2>&1
 sleep 1
-$NEW_REQUEST --url=$HTTP_200 --id=MSGID0001 > /dev/null 2>&1
+$NEW_REQUEST --url=$HTTP_200 --id=MSGID0003 > /dev/null 2>&1
 Signal QUIT
 sleep 10
 CheckResults
@@ -280,7 +297,7 @@ $NEW_REQUEST --url=$HTTP_200 --id=MSGID0001 > /dev/null 2>&1
 sleep 1
 $NEW_REQUEST --url=$HTTP_200 --id=MSGID0002 > /dev/null 2>&1
 sleep 1
-$NEW_REQUEST --url=$HTTP_200 --id=MSGID0002 > /dev/null 2>&1
+$NEW_REQUEST --url=$HTTP_200 --id=MSGID0003 > /dev/null 2>&1
 sleep 1
 $NEW_REQUEST --url=$HTTP_200 --id=MSGID0004 > /dev/null 2>&1
 sleep 12
@@ -321,10 +338,11 @@ sleep 10
 CheckResults
 Signal QUIT
 
+Cleanup
+
 #############
 #   E N D   #
 #############
-Cleanup
 echo
 echo -e "\e[92m# of passed tests: $passedno\e[39m"
 echo -e "\e[91m# of failed tests: $failedno\e[39m"

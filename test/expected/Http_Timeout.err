@@ -1,2 +1,2 @@
-2016-05-06T02:51:25Z - Message ID MSGID0001 - Http request error: Post http://apps.testinsane.com/rte/status/200/20: net/http: request canceled (Client.Timeout exceeded while awaiting headers)
+2016-05-06T02:51:25Z - Message ID MSGID0001 - Http request error: Post <<URL>>: net/http: request canceled (Client.Timeout exceeded while awaiting headers)
 2016-05-06T02:51:25Z - Message ID MSGID0001 - EXPIRED

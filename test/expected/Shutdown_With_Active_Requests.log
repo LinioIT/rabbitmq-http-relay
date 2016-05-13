@@ -11,13 +11,13 @@
 2016-05-06T03:17:49Z - Consumer registered successfully
 2016-05-06T03:17:49Z - Started 'closed channel' listener
 2016-05-06T03:17:50Z - Message ID MSGID0001 - Parsed successfully
-2016-05-06T03:17:51Z - Message ID MSGID0001 - Parsed successfully
-2016-05-06T03:17:52Z - Message ID MSGID0001 - Parsed successfully
+2016-05-06T03:17:51Z - Message ID MSGID0002 - Parsed successfully
+2016-05-06T03:17:52Z - Message ID MSGID0003 - Parsed successfully
 2016-05-06T03:17:52Z - Graceful shutdown requested
 2016-05-06T03:17:56Z - Message ID MSGID0001 - Http request success: 200 OK
 2016-05-06T03:17:56Z - Message ID MSGID0001 - Dropping
-2016-05-06T03:17:57Z - Message ID MSGID0001 - Http request success: 200 OK
-2016-05-06T03:17:57Z - Message ID MSGID0001 - Dropping
-2016-05-06T03:17:58Z - Message ID MSGID0001 - Http request success: 200 OK
-2016-05-06T03:17:58Z - Message ID MSGID0001 - Dropping
+2016-05-06T03:17:57Z - Message ID MSGID0002 - Http request success: 200 OK
+2016-05-06T03:17:57Z - Message ID MSGID0002 - Dropping
+2016-05-06T03:17:58Z - Message ID MSGID0003 - Http request success: 200 OK
+2016-05-06T03:17:58Z - Message ID MSGID0003 - Dropping
 2016-05-06T03:17:58Z - Graceful shutdown completed.
