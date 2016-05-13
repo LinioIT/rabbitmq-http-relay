@@ -55,7 +55,7 @@ These steps have been tested with Ubuntu 14.04, but should work for any Linux di
 
 Testing
 -------
-The included test suite exercises the worker. The log and standard error outputs are verified against the expected results.
+The included test suite exercises the worker. The log file, error file, and standard error outputs are verified against the expected results.
 An external website is used to produce specific http responses and delays (see test script rw-test for details).
 Currently, the tests take about 3 minutes to complete. Run the following commands to execute the tests:  
 `cd $GOPATH/src/github.com/LinioIT/rabbitmq-worker/test`  

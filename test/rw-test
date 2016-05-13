@@ -11,8 +11,10 @@ CONFIG_TEST=rabbitmq-worker.conf_test
 
 NEW_REQUEST=insertHttpRequest
 
-LOG=rabbitmq-worker.log
-STDERR_LOG=stderr.log
+LOG_OUTPUT=rabbitmq-worker.log
+ERR_OUTPUT=rabbitmq-worker.err
+STDERR_OUTPUT=stderr.log
+
 ERROR_LOG=error.log
 RESET_ERROR_LOG=reset_error.log
 
@@ -31,8 +33,8 @@ ENDCOLOR="\e[39m"
 function Reset {
     if    cp $CONFIG_TEST $CONFIG > $RESET_ERROR_LOG 2>&1  &&
           deleteQueue $CONFIG > $RESET_ERROR_LOG 2>&1  &&
-          rm -f $LOG $STDERR_LOG > $RESET_ERROR_LOG 2>&1  &&
-          touch $LOG
+          rm -f $LOG_OUTPUT $ERR_OUTPUT $STDERR_OUTPUT > $RESET_ERROR_LOG 2>&1  &&
+          touch $LOG_OUTPUT $ERR_OUTPUT
     then  return
     else  echo -e $RED
           echo Could not reset environment, check $RESET_ERROR_LOG
@@ -43,7 +45,7 @@ function Reset {
 }
 
 function Cleanup {
-    rm -f $CONFIG $LOG > /dev/null 2>&1
+    rm -f $CONFIG $LOG_OUTPUT $ERR_OUTPUT $STDERR_OUTPUT > /dev/null 2>&1
     deleteQueue $CONFIG > /dev/null 2>&1
 }
 
@@ -76,6 +78,7 @@ function LogDump {
 
 function CheckResults {
     EXPECTED_LOG=expected/$(echo "$TESTNAME" | sed 's/ /_/g').log
+    EXPECTED_ERR=expected/$(echo "$TESTNAME" | sed 's/ /_/g').err
     EXPECTED_STDERR=expected/$(echo "$TESTNAME" | sed 's/ /_/g').stderr
 
     # Verify that the "expected log" file exists. If not, create a blank one.
@@ -87,7 +90,7 @@ function CheckResults {
 
     # Compare the actual and expected log output
     DiffPrep $EXPECTED_LOG expected_log.tmp
-    DiffPrep $LOG actual_log.tmp
+    DiffPrep $LOG_OUTPUT actual_log.tmp
     DIFF=$(diff -q expected_log.tmp actual_log.tmp 2>&1)
     if    [[ x${DIFF}x != xx ]]
     then  let ERROR_COUNT=$ERROR_COUNT+1
@@ -96,12 +99,29 @@ function CheckResults {
     fi
     rm -f expected_log.tmp actual_log.tmp
 
+    # Compare the actual and expected error output
+    if    [[ -s $ERR_OUTPUT  ||  -s $EXPECTED_ERR ]]
+    then  touch $ERR_OUTPUT
+          touch $EXPECTED_ERR
+          DiffPrep $EXPECTED_ERR expected_err.tmp
+          DiffPrep $ERR_OUTPUT actual_err.tmp
+          DIFF=$(diff -q expected_err.tmp actual_err.tmp 2>&1)
+          if    [[ x${DIFF}x != xx ]]
+          then  let ERROR_COUNT=$ERROR_COUNT+1
+                if    [[ $ERROR_COUNT == 1 ]]
+                then  LogDumpHeader
+                fi
+                LogDump "error output" expected_err.tmp actual_err.tmp
+          fi
+    fi
+    rm -f expected_err.tmp actual_err.tmp
+
     # Compare the actual and expected stderr output, if any
-    if    [[ -s $STDERR_LOG  ||  -s $EXPECTED_STDERR ]]
-    then  touch $STDERR_LOG
+    if    [[ -s $STDERR_OUTPUT  ||  -s $EXPECTED_STDERR ]]
+    then  touch $STDERR_OUTPUT
           touch $EXPECTED_STDERR
           DiffPrep $EXPECTED_STDERR expected_stderr.tmp
-          DiffPrep $STDERR_LOG actual_stderr.tmp
+          DiffPrep $STDERR_OUTPUT actual_stderr.tmp
           DIFF=$(diff -q expected_stderr.tmp actual_stderr.tmp 2>&1)
           if    [[ x${DIFF}x != xx ]]
           then  let ERROR_COUNT=$ERROR_COUNT+1
@@ -140,49 +160,49 @@ echo
 #################
 
 StartTest "Create Queues"
-$WORKER --queues-only $CONFIG 2> $STDERR_LOG
+$WORKER --queues-only $CONFIG 2> $STDERR_OUTPUT
 CheckResults
 
 StartTest "Startup"
-$WORKER $CONFIG 2> $STDERR_LOG &
+$WORKER $CONFIG 2> $STDERR_OUTPUT &
 sleep 1
 Signal QUIT
 sleep 1
 CheckResults
 
 StartTest "Startup With Debug"
-$WORKER --debug $CONFIG 2> $STDERR_LOG &
+$WORKER --debug $CONFIG 2> $STDERR_OUTPUT &
 sleep 1
 Signal QUIT
 sleep 1
 CheckResults
 
 StartTest "Help"
-$WORKER --help $CONFIG 2> $STDERR_LOG
+$WORKER --help $CONFIG 2> $STDERR_OUTPUT
 CheckResults
 
 StartTest "Bad Option"
-$WORKER --derp $CONFIG 2> $STDERR_LOG
+$WORKER --derp $CONFIG 2> $STDERR_OUTPUT
 CheckResults
 
 StartTest "Missing Config File"
-$WORKER no_config_file 2> $STDERR_LOG
+$WORKER no_config_file 2> $STDERR_OUTPUT
 CheckResults
 
 StartTest "Missing Queue Name"
 grep -v "^Name = " $CONFIG > config.tmp
 mv config.tmp $CONFIG
-$WORKER $CONFIG 2> $STDERR_LOG
+$WORKER $CONFIG 2> $STDERR_OUTPUT
 CheckResults
 
 StartTest "Invalid RabbitMQ URL"
 sed 's/^RabbitmqURL =.*$/RabbitmqURL = dummy/' $CONFIG > config.tmp
 mv config.tmp $CONFIG
-$WORKER $CONFIG 2> $STDERR_LOG
+$WORKER $CONFIG 2> $STDERR_OUTPUT
 CheckResults
 
 StartTest "Graceful Restart"
-$WORKER $CONFIG 2> $STDERR_LOG &
+$WORKER $CONFIG 2> $STDERR_OUTPUT &
 sleep 1
 Signal HUP
 sleep 3
@@ -190,7 +210,7 @@ CheckResults
 Signal QUIT
 
 StartTest "Log Reopen"
-$WORKER $CONFIG 2> $STDERR_LOG &
+$WORKER $CONFIG 2> $STDERR_OUTPUT &
 sleep 1
 Signal USR1
 sleep 3
@@ -198,7 +218,7 @@ CheckResults
 Signal QUIT
 
 StartTest "200 Response"
-$WORKER $CONFIG 2> $STDERR_LOG &
+$WORKER $CONFIG 2> $STDERR_OUTPUT &
 sleep 1
 $NEW_REQUEST --url=$HTTP_200 --id=MSGID0001 > /dev/null 2>&1
 sleep 10
@@ -206,7 +226,7 @@ CheckResults
 Signal QUIT
 
 StartTest "404 Response"
-$WORKER $CONFIG 2> $STDERR_LOG &
+$WORKER $CONFIG 2> $STDERR_OUTPUT &
 sleep 1
 $NEW_REQUEST --url=$HTTP_404 --id=MSGID0001 > /dev/null 2>&1
 sleep 5
@@ -214,7 +234,7 @@ CheckResults
 Signal QUIT
 
 StartTest "500 Response With Retries"
-$WORKER $CONFIG 2> $STDERR_LOG &
+$WORKER $CONFIG 2> $STDERR_OUTPUT &
 sleep 1
 $NEW_REQUEST --url=$HTTP_500 --id=MSGID0001 --ttl=25 > /dev/null 2>&1
 sleep 27
@@ -224,7 +244,7 @@ Signal QUIT
 StartTest "Http Timeout"
 sed 's/^Timeout = 30/Timeout = 15/' $CONFIG > config.tmp
 mv config.tmp $CONFIG
-$WORKER $CONFIG 2> $STDERR_LOG &
+$WORKER $CONFIG 2> $STDERR_OUTPUT &
 sleep 1
 $NEW_REQUEST --url=$HTTP_DELAY_20 --id=MSGID0001 --ttl=20 > /dev/null 2>&1
 sleep 20
@@ -232,13 +252,13 @@ CheckResults
 Signal QUIT
 
 StartTest "Shutdown With Active Requests"
-$WORKER $CONFIG 2> $STDERR_LOG &
+$WORKER $CONFIG 2> $STDERR_OUTPUT &
 sleep 1
 $NEW_REQUEST --url=$HTTP_200 --id=MSGID0001 > /dev/null 2>&1
 sleep 1
-$NEW_REQUEST --url=$HTTP_200 --id=MSGID0002 > /dev/null 2>&1
+$NEW_REQUEST --url=$HTTP_200 --id=MSGID0001 > /dev/null 2>&1
 sleep 1
-$NEW_REQUEST --url=$HTTP_200 --id=MSGID0003 > /dev/null 2>&1
+$NEW_REQUEST --url=$HTTP_200 --id=MSGID0001 > /dev/null 2>&1
 Signal QUIT
 sleep 10
 CheckResults
@@ -246,7 +266,7 @@ CheckResults
 StartTest "Default TTL"
 sed 's/^DefaultTTL = 60/DefaultTTL = 15/' $CONFIG > config.tmp
 mv config.tmp $CONFIG
-$WORKER $CONFIG 2> $STDERR_LOG &
+$WORKER $CONFIG 2> $STDERR_OUTPUT &
 sleep 1
 $NEW_REQUEST --url=$HTTP_500 --id=MSGID0001 > /dev/null 2>&1
 sleep 17
@@ -254,13 +274,13 @@ CheckResults
 Signal QUIT
 
 StartTest "Prefetch Count"
-$WORKER $CONFIG 2> $STDERR_LOG &
+$WORKER $CONFIG 2> $STDERR_OUTPUT &
 sleep 1
 $NEW_REQUEST --url=$HTTP_200 --id=MSGID0001 > /dev/null 2>&1
 sleep 1
 $NEW_REQUEST --url=$HTTP_200 --id=MSGID0002 > /dev/null 2>&1
 sleep 1
-$NEW_REQUEST --url=$HTTP_200 --id=MSGID0003 > /dev/null 2>&1
+$NEW_REQUEST --url=$HTTP_200 --id=MSGID0002 > /dev/null 2>&1
 sleep 1
 $NEW_REQUEST --url=$HTTP_200 --id=MSGID0004 > /dev/null 2>&1
 sleep 12
@@ -268,7 +288,7 @@ CheckResults
 Signal QUIT
 
 StartTest "Get Request"
-$WORKER $CONFIG 2> $STDERR_LOG &
+$WORKER $CONFIG 2> $STDERR_OUTPUT &
 sleep 1
 $NEW_REQUEST --url=$HTTP_GET --method=GET --body="" --id=MSGID0001 > /dev/null 2>&1
 sleep 10
@@ -276,7 +296,7 @@ CheckResults
 Signal QUIT
 
 StartTest "Put Request"
-$WORKER $CONFIG 2> $STDERR_LOG &
+$WORKER $CONFIG 2> $STDERR_OUTPUT &
 sleep 1
 $NEW_REQUEST --url=$HTTP_PUT --method=PUT --id=MSGID0001 > /dev/null 2>&1
 sleep 10
@@ -286,7 +306,7 @@ Signal QUIT
 StartTest "Default Get Request"
 sed 's/POST/GET/' $CONFIG > config.tmp
 mv config.tmp $CONFIG
-$WORKER $CONFIG 2> $STDERR_LOG &
+$WORKER $CONFIG 2> $STDERR_OUTPUT &
 sleep 1
 $NEW_REQUEST --url=$HTTP_GET --body="" --id=MSGID0001 > /dev/null 2>&1
 sleep 10
@@ -294,7 +314,7 @@ CheckResults
 Signal QUIT
 
 StartTest "Wrong Method"
-$WORKER $CONFIG 2> $STDERR_LOG &
+$WORKER $CONFIG 2> $STDERR_OUTPUT &
 sleep 1
 $NEW_REQUEST --url=$HTTP_GET --id=MSGID0001 > /dev/null 2>&1
 sleep 10
