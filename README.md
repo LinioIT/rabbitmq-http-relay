@@ -131,13 +131,13 @@ PrefetchCount = 10     # Maximum number of simultaneous unacknowledged messages.
                        # If set to 0, no maximum is enforced.  This is NOT recommended.
 
 [Message]
-DefaultTTL = 86400     # Default message TTL, in seconds
-                       # Total time a message can remain in RabbitMQ before being expired and dropped
+DefaultTTL = 86400     # Default message TTL, in seconds.
+                       # Total time a message can remain in RabbitMQ before being expired and dropped.
                        # This default is overridden if the "expiration" header of the RabbitMQ message
-                       # is set as a Unix timestamp
+                       # is set as a Unix timestamp.
 
 [Http]
-DefaultMethod = POST   # Default http method, if not specified with the message.
+DefaultMethod = POST   # Http method to be used if none is specified with the message.
                        # GET, POST, PUT, DELETE, etc...
 Timeout = 30           # Http request timeout, in seconds
 
