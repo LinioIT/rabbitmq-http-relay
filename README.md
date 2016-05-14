@@ -156,14 +156,24 @@ been provided as an example of how to create a message.
 ```
 | Field    | Required |
 | -------- | -------- |
-| URL      |    Y     |
-| Method   |    N     |
-| Headers  |    N     |
-| Body     |    N     |
-```
+| url      |    Y     |
+| method   |    N     |
+| headers  |    N     |
+| body     |    N     |
 
-*Sample JSON encoded http request:*
-```
 {"url": "http://localhost:8000/post/200/0", "method": "POST", "headers": [{"Content-Type": "application/json"}, {"Accept-Charset": "utf-8"}], "body": "{\"key\": \"1230789\"}"}
 ```
 
+*RabbitMQ Message headers:*  
+```
+| Header      | Required | Description                                                          |
+| ----------- | -------- | -------------------------------------------------------------------- |
+| message_id  |    N     | Client-supplied id for tracking messages in the logs                 |
+| expiration  |    N     | Timestamp to mark when the message will expire and should be dropped |
+
+- If message_id is not provided, the worker will generate a Message ID
+  The format of the generated id is <<md5 of message body>>-<<original timestamp>> (if the timestamp plugin is enabled)
+  e.g. 1ffcbf1f6044ae63631bd9d7c6967c51-1463192985
+
+- If the expiration is not provided, the DefaultTTL from the config file is used
+```
