@@ -147,8 +147,8 @@ ErrFile = rabbitmq-worker.err
 ```
 
 **Inserting Http Requests**  
-As mentioned previously, a message containing an http request has to be inserted into RabbitMQ to initiate reliable delivery.
-The http request itself is JSON encoded and inserted as the body of the message. A message id and message expiration can
+Reliable delivery is initiated by inserting a message containing an http request into RabbitMQ.  
+The http request is JSON encoded and inserted as the body of the RabboitMQ message. A message id and message expiration can
 also be specified by inserting them into the headers of the RabbitMQ message.  The Go program insertHttpRequest/main.go has
 been provided as an example of how to create a message.  
 
@@ -171,9 +171,24 @@ been provided as an example of how to create a message.
 | message_id  |    N     | Client-supplied id for tracking messages in the logs                 |
 | expiration  |    N     | Timestamp to mark when the message will expire and should be dropped |
 
-- If message_id is not provided, the worker will generate a Message ID
-  The format of the generated id is <<md5 of message body>>-<<original timestamp>> (if the timestamp plugin is enabled)
+- If message_id is not provided, the worker will automatically generate an id.
+  The format of the generated id is <<md5 of message body>>-<<original timestamp>> (if the timestamp plugin is enabled).
   e.g. 1ffcbf1f6044ae63631bd9d7c6967c51-1463192985
 
-- If the expiration is not provided, the DefaultTTL from the config file is used
+- If the expiration is not provided, then DefaultTTL from the config file is used
+```
+
+*insertHttpRequest*  
+Please review the source code for more information on inserting an http request message: insertHttpRequest/main.go
+```
+Usage: insertHttpRequest --url=URL [OPTION]
+
+  --url            HTTP request URL. Required.
+  --method         HTTP request method. If not provided, the default method will be used.
+  --headers        HTTP request headers - JSON encoded array. Defaults to sample headers.
+  --body           HTTP request body. Defaults to a sample JSON body. Double-quotes in JSON must be escaped.
+  --id             Message ID. If not provided, an id will be generated.
+  --ttl            Message TTL. If not provided, the default expiration will be used.
+
+Example: insertHttpRequest --url=http://httpbin.org/post --method=POST --headers='[{"Content-Type": "application/json"}]' --body='{\"key\": \"1230789\"}' --id=MSGID00002 --ttl=55
 ```
