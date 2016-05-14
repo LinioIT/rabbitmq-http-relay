@@ -178,8 +178,8 @@ been provided as an example of how to create a message.
 - If the expiration is not provided, then DefaultTTL from the config file is used
 ```
 
-*insertHttpRequest*  
-Please review the source code for more information on inserting an http request message: insertHttpRequest/main.go
+*insertHttpRequest:*  
+Please review the source code (insertHttpRequest/main.go) for more information on inserting http request messages.
 ```
 Usage: insertHttpRequest --url=URL [OPTION]
 
@@ -192,3 +192,23 @@ Usage: insertHttpRequest --url=URL [OPTION]
 
 Example: insertHttpRequest --url=http://httpbin.org/post --method=POST --headers='[{"Content-Type": "application/json"}]' --body='{\"key\": \"1230789\"}' --id=MSGID00002 --ttl=55
 ```
+
+**OS Signals**  
+Operating system signals provide a means for performing admin tasks on a running worker:
+```
+| Signal   | Description                   |
+| -------- | ----------------------------- |
+| QUIT     | Graceful Shutdown             |
+| HUP      | Graceful Restart              |
+| USR1     | Log Reopen (for log rotation) |
+
+e.g. kill -QUIT PROCESS_ID
+```
+
+
+Future Enhancements
+-------------------
+- Exponential backoff, or some other technique to provide increasing delays on successive http retries
+- Reporting to provide stats on message volumes and error rates
+- Client callback for dropped, or excessively delayed, requests
+
