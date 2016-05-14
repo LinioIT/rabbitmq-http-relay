@@ -93,3 +93,51 @@ Test 21 - Wrong Method...                    PASSED
 
 Tests completed - Wed May 11 22:51:47 UTC 2016
 ```
+
+
+Usage
+-----
+```
+Usage: rabbitmq-worker [OPTION] CONFIG_FILE
+
+  --debug          Write debug-level messages to the log file
+  -h, --help       Display this message
+  --queues-only    Create/Verify RabbitMQ queues, then exit
+```
+
+**Queues**  
+Two RabbitMQ queues are created when the worker begins, the main and wait queues. The name of the main queue is specified in
+the config file and the wait queue is the same, with "_wait" appended. If the queues already exist, then they are verified
+to confirm their parameters. Failure to create or verify the queues will cause the worker to terminate. Please note that
+changes to the config file between executions of the worker, or upon a graceful restart, may cause verification of the existing
+queues to fail. The offending queues should be deleted using RabbitMQ admin tools, so they can be regenerated at the next
+invocation.  Here is a sample error reported when a queue cannot be verified:
+```
+2016-05-14T04:37:42Z - Error detected while creating/verifying queues: Could not declare queue notifier_wait
+```
+
+**Config File**  
+Here is a sample config file with parameter description:
+```
+[Connection]
+RabbitmqURL = amqp://rmq:rmq@localhost:5672/
+RetryDelay = 30        # Delay before attempting to restore a broken connection, in seconds
+
+[Queue]
+Name = notifier
+WaitDelay = 30         # Message TTL for the wait queue, in seconds (delay between http request attempts)
+PrefetchCount = 10     # Maximum number of simultaneous unacknowledged messages. This also controls the maximum number of http request threads.
+                       # If set to 0, no maximum is enforced.  This is NOT recommended.
+
+[Message]
+DefaultTTL = 86400     # Default message TTL, in seconds (total time a message can remain in RabbitMQ before being expired and dropped)
+                       # This default is overridden if the "expiration" header of the RabbitMQ message is set as a Unix timestamp
+
+[Http]
+DefaultMethod = POST   # Default http method, if not specified with the message. (GET, POST, PUT, DELETE, etc...)
+Timeout = 30           # Http request timeout, in seconds
+
+[Log]
+LogFile = rabbitmq-worker.log
+ErrFile = rabbitmq-worker.err
+```
