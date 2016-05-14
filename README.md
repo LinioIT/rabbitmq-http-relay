@@ -108,10 +108,10 @@ Usage: rabbitmq-worker [OPTION] CONFIG_FILE
 **Queues**  
 Two RabbitMQ queues are created when the worker begins, the main and wait queues. The name of the main queue is specified in
 the config file and the wait queue is the same, with "_wait" appended. If the queues already exist, they are verified to
-confirm their parameters. Failure to create or verify the queues will cause the worker to terminate. Please note that changes
-to the config file between executions of the worker, or upon a graceful restart, may cause verification of the existing
-queues to fail. The offending queues should be deleted using RabbitMQ admin tools, so they can be regenerated at the next
-invocation.  Here is a sample error reported when a queue cannot be verified:
+confirm their parameters. Failure to create or verify the queues will cause the worker to terminate.  
+Please note that changes to the config file between executions of the worker, or upon a graceful restart, may cause
+verification of the existing queues to fail. The offending queues should be deleted using RabbitMQ admin tools, so they can
+be regenerated at the next invocation.  Here is a sample error reported when a queue cannot be verified:
 ```
 2016-05-14T04:37:42Z - Error detected while creating/verifying queues: Could not declare queue notifier_wait
 ```
@@ -134,7 +134,7 @@ PrefetchCount = 10     # Maximum number of simultaneous unacknowledged messages.
 DefaultTTL = 86400     # Default message TTL, in seconds.
                        # Total time a message can remain in RabbitMQ before being expired and dropped.
                        # This default is overridden if the "expiration" header of the RabbitMQ message
-                       # is set as a Unix timestamp.
+                       # contains a timestamp.
 
 [Http]
 DefaultMethod = POST   # Http method to be used if none is specified with the message.
@@ -145,3 +145,23 @@ Timeout = 30           # Http request timeout, in seconds
 LogFile = rabbitmq-worker.log
 ErrFile = rabbitmq-worker.err
 ```
+
+**Inserting Http Requests**  
+As mentioned previously, a message containing an http request has to be inserted into RabbitMQ to initiate reliable delivery.
+The http request itself is JSON encoded and inserted as the body of the message. A message id and message expiration can
+also be specified by inserting them into the headers of the RabbitMQ message.  The Go program insertHttpRequest/main.go has
+been provided as an example of how to create a message.  
+
+*JSON encoded http request:*  
+| Field    | Required |
+| -------- | -------- |
+| URL      |    Y     |
+| Method   |    N     |
+| Headers  |    N     |
+| Body     |    N     |
+
+*Sample JSON encoded http request:*
+```
+{"url": "http://localhost:8000/post/200/0", "method": "POST", "headers": [{"Content-Type": "application/json"}, {"Accept-Charset": "utf-8"}], "body": "{\"key\": \"1230789\"}"}
+```
+
