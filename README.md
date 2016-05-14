@@ -153,12 +153,14 @@ also be specified by inserting them into the headers of the RabbitMQ message.  T
 been provided as an example of how to create a message.  
 
 *JSON encoded http request:*  
+```
 | Field    | Required |
 | -------- | -------- |
 | URL      |    Y     |
 | Method   |    N     |
 | Headers  |    N     |
 | Body     |    N     |
+```
 
 *Sample JSON encoded http request:*
 ```
