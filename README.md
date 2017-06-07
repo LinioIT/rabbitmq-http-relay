@@ -206,6 +206,28 @@ e.g. kill -QUIT PROCESS_ID
 ```
 
 
+Docker Container
+----------------
+In order to build the container image, install [Go](https://golang.org/dl/) and [Docker](https://www.docker.com/get-docker), then just:
+
+    $ make
+
+This will create a `rabbitmq-worker` image.
+
+In order to run it:
+
+    $ ./docker_run.sh
+
+This script will mount data volumes for the configuration, log, and error files. The path for these files on the host are set at the top of the script. The paths in the container for the log and error files are read from the configuration file. **All paths must be absolute.**
+
+Use the `docker_signal.sh` script to send an OS signal to rabbitmq-worker in the container.  
+For example, to initiate a graceful shutdown:
+
+    $ ./docker_signal.sh QUIT
+
+Note that this script does not accept the USR1 signal. In order to rotate the log files on the host, please gracefully shutdown the container, move the log files, then restart the container.
+
+
 Future Enhancements
 -------------------
 - Exponential backoff, or some other technique to provide increasing delays on successive http retries
