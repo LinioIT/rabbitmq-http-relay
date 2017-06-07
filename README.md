@@ -206,6 +206,45 @@ e.g. kill -QUIT PROCESS_ID
 ```
 
 
+Docker Container
+----------------
+**Build the container image**  
+Install [Go](https://golang.org/dl/) and [Docker](https://www.docker.com/get-docker), then just:
+
+    $ make
+
+This will create a `linio/rabbitmq-worker` image.
+
+**Run the container**  
+To run the container and redirect the log files to stdout and stderr:
+1) Set the stdout/stderr file paths in the configuration file
+
+```
+[Log]
+LogFile = /dev/stdout
+ErrFile = /dev/stderr
+```
+
+2) Mount the configuration file as a data volume and run the container
+
+```
+$ docker run -v $(pwd)/rabbitmq-worker.conf:/etc/rabbitmq-worker.conf linio/rabbitmq-worker
+```
+
+*Note: The log files can also be mounted as data volumes, instead of using stdout/stderr.*
+
+**Shutdown and Restart**  
+The container should be shutdown or restarted gracefully by passing an OS signal.
+
+To shutdown the container:
+
+    $ docker kill --signal=QUIT CONTAINER_ID
+
+To restart the worker inside the container:
+
+    $ docker kill --signal=HUP CONTAINER_ID
+
+
 Future Enhancements
 -------------------
 - Exponential backoff, or some other technique to provide increasing delays on successive http retries
