@@ -48,13 +48,13 @@ function Reset {
 }
 
 function Init {
-	$TEST_WEBSERVER $PORT > /dev/null 2>&1 &
+    $TEST_WEBSERVER $PORT > /dev/null 2>&1 &
 }
 
 function Cleanup {
-    rm -f $CONFIG $LOG_OUTPUT $ERR_OUTPUT $STDERR_OUTPUT > /dev/null 2>&1
     deleteQueue $CONFIG > /dev/null 2>&1
-	wget -O /dev/null > /dev/null 2>&1 $HTTP_STOP
+    rm -f $CONFIG $LOG_OUTPUT $ERR_OUTPUT $STDERR_OUTPUT > /dev/null 2>&1
+    wget -O /dev/null > /dev/null 2>&1 $HTTP_STOP
 }
 
 function StartTest {
