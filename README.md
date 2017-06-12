@@ -148,7 +148,7 @@ ErrFile = rabbitmq-worker.err
 
 **Inserting Http Requests**  
 Reliable delivery is initiated by inserting a message containing an http request into RabbitMQ.  
-The http request is JSON encoded and inserted as the body of the RabboitMQ message. A message id and message expiration can
+The http request is JSON encoded and inserted as the body of the RabbitMQ message. A message id and message expiration can
 also be specified by inserting them into the headers of the RabbitMQ message.  The Go program insertHttpRequest/main.go has
 been provided as an example of how to create a message.  
 
